@@ -8,24 +8,23 @@ import Generate from "@/pages/Generate";
 import Gallery from "@/pages/Gallery";
 import Settings from "@/pages/Settings";
 
+const TOAST_OPTIONS = {
+    style: {
+        border: "2px solid #000",
+        borderRadius: 0,
+        boxShadow: "4px 4px 0 0 #000",
+        background: "#fff",
+        color: "#000",
+        fontWeight: 600,
+        zIndex: 9999,
+    },
+};
+
 function App() {
     return (
         <div className="App">
             <BrowserRouter>
-                <Toaster
-                    position="top-right"
-                    toastOptions={{
-                        style: {
-                            border: "2px solid #000",
-                            borderRadius: 0,
-                            boxShadow: "4px 4px 0 0 #000",
-                            background: "#fff",
-                            color: "#000",
-                            fontWeight: 600,
-                            zIndex: 9999,
-                        },
-                    }}
-                />
+                <Toaster position="top-right" toastOptions={TOAST_OPTIONS} />
                 <Routes>
                     <Route element={<Layout />}>
                         <Route index element={<Dashboard />} />

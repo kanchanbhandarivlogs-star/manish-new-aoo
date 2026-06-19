@@ -279,7 +279,8 @@ const Gallery = () => {
             setAds(r.data);
             setFocusAd((curr) => (curr ? r.data.find((a) => a.id === curr.id) || curr : curr));
         } catch (err) {
-            console.warn("Background ads poll failed", err);
+            // ignore — silent background poll
+            void err;
         }
     }, []);
 

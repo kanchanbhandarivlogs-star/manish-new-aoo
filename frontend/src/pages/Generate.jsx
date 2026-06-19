@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { apiClient } from "@/lib/api";
+import { useAdGeneration } from "@/hooks/useAdGeneration";
 import { Sparkles, Globe, FileSearch, Wand2, ChevronRight, AlertCircle } from "lucide-react";
 import { toast } from "sonner";
 
@@ -247,16 +248,16 @@ const Generate = () => {
     const [includeVideo, setIncludeVideo] = useState(false);
     const [videoDuration, setVideoDuration] = useState(4);
     const [videoSize, setVideoSize] = useState("1024x1792");
-    const [scraping, setScraping] = useState(false);
-    const [generating, setGenerating] = useState(false);
-    const [progressStep, setProgressStep] = useState(0);
+
+    const { scraping, generating, progressStep, handleScrape, handleGenerate } =
+        useAdGeneration({ websites, navigate });
 
     const loadWebsites = useCallback(async () => {
         try {
             const r = await apiClient.get("/websites");
             setWebsites(r.data);
         } catch (err) {
-            console.warn("Failed to load websites for picker", err);
+            void err;
         }
     }, []);
 
@@ -264,60 +265,17 @@ const Generate = () => {
         loadWebsites();
     }, [loadWebsites]);
 
-    const handleScrape = async () => {
-        const site = websites.find((w) => w.id === selectedWebsite);
-        if (!site) {
-            toast.error("Select a website first");
-            return;
-        }
-        setScraping(true);
-        try {
-            const res = await apiClient.post("/scrape", { url: site.url });
-            const title = res.data.title || res.data.description || "";
-            if (title) {
-                setTopic(`${title}${res.data.description ? " — " + res.data.description : ""}`.slice(0, 400));
-                toast.success("Scraped! Topic auto-filled");
-            } else {
-                toast.message("Page scraped, but no clear topic. Type one manually.");
-            }
-        } catch {
-            toast.error("Could not scrape. Try a different URL.");
-        } finally {
-            setScraping(false);
-        }
-    };
-
-    const handleGenerate = async () => {
-        if (!topic.trim()) {
-            toast.error("Topic / product is required");
-            return;
-        }
-        setGenerating(true);
-        setProgressStep(1);
-        const stepTimer = setInterval(() => {
-            setProgressStep((s) => (s < 3 ? s + 1 : s));
-        }, 5000);
-        try {
-            const res = await apiClient.post("/ads/generate", {
-                website_id: selectedWebsite || null,
-                topic,
-                audience,
-                tone,
-                include_image: includeImage,
-                include_video: includeVideo,
-                video_duration: videoDuration,
-                video_size: videoSize,
-            });
-            toast.success("Ad generated! Review it now.");
-            navigate(`/gallery?focus=${res.data.id}`);
-        } catch (err) {
-            toast.error(err.response?.data?.detail || "Generation failed");
-        } finally {
-            clearInterval(stepTimer);
-            setGenerating(false);
-            setProgressStep(0);
-        }
-    };
+    const onScrape = () => handleScrape(selectedWebsite, setTopic);
+    const onGenerate = () => handleGenerate({
+        website_id: selectedWebsite || null,
+        topic,
+        audience,
+        tone,
+        include_image: includeImage,
+        include_video: includeVideo,
+        video_duration: videoDuration,
+        video_size: videoSize,
+    });
 
     return (
         <div className="space-y-6" data-testid="generate-page">
@@ -328,7 +286,7 @@ const Generate = () => {
                         websites={websites}
                         selectedWebsite={selectedWebsite}
                         onChange={setSelectedWebsite}
-                        onScrape={handleScrape}
+                        onScrape={onScrape}
                         scraping={scraping}
                     />
                     <BriefSection
@@ -342,7 +300,7 @@ const Generate = () => {
                         videoDuration={videoDuration} setVideoDuration={setVideoDuration}
                         videoSize={videoSize} setVideoSize={setVideoSize}
                     />
-                    <GenerateButton generating={generating} onClick={handleGenerate} />
+                    <GenerateButton generating={generating} onClick={onGenerate} />
                 </div>
                 <div className="lg:col-span-1">
                     <ProgressPanel generating={generating} progressStep={progressStep} />

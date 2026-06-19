@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { apiClient } from "@/lib/api";
+import { useWebsiteCrud } from "@/hooks/useWebsiteCrud";
 import { Plus, Trash2, Pencil, Globe, X, Check } from "lucide-react";
 import { toast } from "sonner";
 
@@ -157,7 +158,6 @@ const Websites = () => {
     const [showForm, setShowForm] = useState(false);
     const [form, setForm] = useState(emptyForm);
     const [editingId, setEditingId] = useState(null);
-    const [submitting, setSubmitting] = useState(false);
 
     const load = useCallback(async () => {
         try {
@@ -186,39 +186,12 @@ const Websites = () => {
         setShowForm(true);
     };
 
+    const { submitting, save, remove } = useWebsiteCrud({ onChanged: load });
+
     const submit = async (e) => {
         e.preventDefault();
-        if (!form.name.trim() || !form.url.trim()) {
-            toast.error("Name and URL are required");
-            return;
-        }
-        setSubmitting(true);
-        try {
-            if (editingId) {
-                await apiClient.patch(`/websites/${editingId}`, form);
-                toast.success("Website updated");
-            } else {
-                await apiClient.post("/websites", form);
-                toast.success("Website added");
-            }
-            reset();
-            load();
-        } catch (err) {
-            toast.error(err.response?.data?.detail || "Failed");
-        } finally {
-            setSubmitting(false);
-        }
-    };
-
-    const remove = async (id) => {
-        if (!window.confirm("Delete this website? Ads will remain but lose this link.")) return;
-        try {
-            await apiClient.delete(`/websites/${id}`);
-            toast.success("Deleted");
-            load();
-        } catch {
-            toast.error("Could not delete");
-        }
+        const ok = await save(editingId, form);
+        if (ok) reset();
     };
 
     return (
