@@ -1,0 +1,44 @@
+{
+  "summary": "First iteration full-stack testing of AI Ads Studio. 23/23 backend pytest cases passed (health, stats, websites CRUD, scrape, meta-settings, ad generation with GPT-5.2 + Nano Banana, ad CRUD/filters/download/delete, image served via /api/media). Frontend Playwright run validated dashboard, websites add/edit/delete, generate page selectors, gallery filters, settings persistence across reload, and sidebar navigation. Image generation works end-to-end (PNG ~ valid bytes returned via static mount).",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "/api/ads/generate", "issue": "On image-gen failure the JSON-parsed ad is not yet persisted, but on caption-only success no rollback for partial state (acceptable for MVP)."},
+      {"endpoint": "/api/meta-settings PUT", "issue": "Accepts MetaSettings model but persists the `id` field; multiple PUTs are upserted on empty filter {} which is fine since only one settings doc exists, but could collide if two docs ever inserted."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Layout marquee", "issues": ["The yellow marquee bar at top overlaps a portion of the sonner toast (e.g., 'Deleted' toast appears under marquee). Minor z-index polish."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/backend_test.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [
+    "Optional: improve toast z-index so the top marquee does not visually clip toasts.",
+    "Optional: consider rate/timeout guards around /api/ads/generate (currently took ~18s end-to-end with image)."
+  ],
+  "critical_code_review_comments": [
+    "server.py: `logger` is defined AFTER `_video_task` references it via `logger.exception` — works because Python resolves names at call time, but stylistically the logger should be initialised at the top of the module.",
+    "server.py: `_video_task` runs sync Sora call in a threadpool but uses `max_wait_time=600` (10 min) — fine for background but no DB record cleanup if process restarts during execution.",
+    "server.py: Pydantic `HttpUrl` imported but not used; `WebsiteCreate.url` accepts any string — consider URL validation.",
+    "server.py: `ScrapeRequest` does not validate URL scheme; `_scrape_url` will raise on invalid which is caught and returns 400 — acceptable.",
+    "Mongo write path for ads stores `ad.model_dump()` which includes `id` (good, no _id leakage). All read endpoints already project `_id: 0` correctly.",
+    "Frontend Layout uses `NavLink` activeClass based on pathname.startsWith, which can incorrectly mark `/gallery` active when on `/gallery?focus=...` — current logic OK because it intentionally uses startsWith.",
+    "Generate.jsx uses native <select> (not shadcn Select). Fine and ensures simplicity for tests."
+  ],
+  "updated_files": [
+    "/app/backend/tests/backend_test.py (created)"
+  ],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "test_credentials": "Not applicable — no auth in this app.",
+  "seed_data_creation": "All test data is TEST_-prefixed and cleaned up at end of each test class / playwright run. No residual data left in DB.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Backend tests live at /app/backend/tests/backend_test.py and run with: pytest /app/backend/tests/backend_test.py -v --junitxml=/app/test_reports/pytest/pytest_results.xml. Tests cover full ad-generation pipeline using real Emergent LLM (GPT-5.2 + Nano Banana image only — video skipped). Generation takes ~15-25s. Image is served from /api/media/images/{id}.png. Frontend testids follow kebab-case: nav-dashboard, nav-websites, nav-generate, nav-gallery, nav-settings, website-card-{id}, edit-website-{id}, delete-website-{id}, website-select, scrape-btn, topic-input, toggle-image, toggle-video, generate-btn, ad-card-{id}, filter-status-{all|draft|approved|downloaded}, filter-website-select, approve-btn, copy-caption-btn, download-image-btn, delete-btn, fb-token-input, fb-page-input, ig-account-input, save-settings-btn.",
+  "rca of the issue": "No bugs identified. App is in working state for MVP."
+}
