@@ -24,7 +24,7 @@ const Marquee = () => {
         <div className="marquee" data-testid="header-marquee">
             <div className="marquee-track">
                 {doubled.map((t, i) => (
-                    <span key={i}>{t}</span>
+                    <span key={`${t}-${i}`}>{t}</span>
                 ))}
             </div>
         </div>

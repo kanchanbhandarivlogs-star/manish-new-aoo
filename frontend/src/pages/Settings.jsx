@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { apiClient } from "@/lib/api";
 import { Key, Save, ExternalLink, ShieldCheck } from "lucide-react";
 import { toast } from "sonner";
@@ -8,7 +8,7 @@ const Settings = () => {
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
 
-    const load = async () => {
+    const load = useCallback(async () => {
         try {
             const res = await apiClient.get("/meta-settings");
             setForm({
@@ -16,14 +16,16 @@ const Settings = () => {
                 fb_page_id: res.data.fb_page_id || "",
                 ig_account_id: res.data.ig_account_id || "",
             });
+        } catch {
+            toast.error("Could not load settings");
         } finally {
             setLoading(false);
         }
-    };
+    }, []);
 
     useEffect(() => {
         load();
-    }, []);
+    }, [load]);
 
     const save = async (e) => {
         e.preventDefault();

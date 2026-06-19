@@ -1,9 +1,136 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { apiClient } from "@/lib/api";
 import { Plus, Trash2, Pencil, Globe, X, Check } from "lucide-react";
 import { toast } from "sonner";
 
 const emptyForm = { name: "", url: "", description: "" };
+
+const CARD_COLORS = ["bg-white", "bg-[#FFDBCB]", "bg-[#BAE6FD]", "bg-[#A7F3D0]", "bg-[#DDD6FE]"];
+
+const WebsiteForm = ({ editingId, form, setForm, submitting, onSubmit, onClose }) => (
+    <div className="nb-card p-6" data-testid="website-form">
+        <div className="flex items-start justify-between">
+            <h2 className="font-display font-bold text-2xl">{editingId ? "Edit website" : "Add a website"}</h2>
+            <button className="nb-btn !p-2" onClick={onClose} data-testid="form-close-btn">
+                <X size={16} />
+            </button>
+        </div>
+        <form onSubmit={onSubmit} className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
+            <div>
+                <label className="label-uppercase">Name *</label>
+                <input
+                    className="nb-input mt-2"
+                    placeholder="e.g. CollegeOp"
+                    value={form.name}
+                    onChange={(e) => setForm({ ...form, name: e.target.value })}
+                    data-testid="form-name-input"
+                />
+            </div>
+            <div>
+                <label className="label-uppercase">URL *</label>
+                <input
+                    className="nb-input mt-2"
+                    placeholder="https://collegeop.com"
+                    value={form.url}
+                    onChange={(e) => setForm({ ...form, url: e.target.value })}
+                    data-testid="form-url-input"
+                />
+            </div>
+            <div className="md:col-span-2">
+                <label className="label-uppercase">Description (optional)</label>
+                <input
+                    className="nb-input mt-2"
+                    placeholder="Short brand brief or audience notes"
+                    value={form.description}
+                    onChange={(e) => setForm({ ...form, description: e.target.value })}
+                    data-testid="form-desc-input"
+                />
+            </div>
+            <div className="md:col-span-2 flex gap-3">
+                <button type="submit" className="nb-btn nb-btn-mint" disabled={submitting} data-testid="form-submit-btn">
+                    {submitting ? <div className="nb-spinner" /> : <Check size={16} />}
+                    {editingId ? "Save" : "Add"}
+                </button>
+                <button type="button" className="nb-btn" onClick={onClose} data-testid="form-cancel-btn">
+                    Cancel
+                </button>
+            </div>
+        </form>
+    </div>
+);
+
+const WebsiteCard = ({ website, color, onEdit, onDelete }) => (
+    <div className={`nb-card nb-card-hover p-6 ${color}`} data-testid={`website-card-${website.id}`}>
+        <div className="flex items-start justify-between">
+            <div className="w-10 h-10 bg-white border-2 border-black flex items-center justify-center">
+                <Globe size={18} strokeWidth={2.5} />
+            </div>
+            <div className="flex gap-2">
+                <button
+                    className="nb-btn !p-2 !shadow-[2px_2px_0_0_#000]"
+                    onClick={onEdit}
+                    data-testid={`edit-website-${website.id}`}
+                    title="Edit"
+                >
+                    <Pencil size={14} />
+                </button>
+                <button
+                    className="nb-btn nb-btn-danger !p-2 !shadow-[2px_2px_0_0_#000]"
+                    onClick={onDelete}
+                    data-testid={`delete-website-${website.id}`}
+                    title="Delete"
+                >
+                    <Trash2 size={14} />
+                </button>
+            </div>
+        </div>
+        <h3 className="font-display font-black text-xl mt-4 break-words">{website.name}</h3>
+        <a
+            href={website.url}
+            target="_blank"
+            rel="noreferrer"
+            className="text-sm font-mono underline break-all mt-1 block"
+            data-testid={`website-url-${website.id}`}
+        >
+            {website.url}
+        </a>
+        {website.description && <p className="text-sm mt-3 font-medium">{website.description}</p>}
+    </div>
+);
+
+const renderWebsiteContent = (loading, websites, onEdit, onDelete) => {
+    if (loading) {
+        return (
+            <div className="nb-card p-10 text-center">
+                <div className="nb-spinner mx-auto" />
+            </div>
+        );
+    }
+    if (websites.length === 0) {
+        return (
+            <div className="nb-card p-10 text-center bg-white" data-testid="empty-websites">
+                <Globe size={40} strokeWidth={2.5} className="mx-auto" />
+                <h3 className="font-display font-bold text-2xl mt-4">No websites yet</h3>
+                <p className="text-sm mt-2 font-medium max-w-md mx-auto">
+                    Add your first website to start generating AI ads. You can add multiple, edit or delete them anytime — no code changes ever needed.
+                </p>
+            </div>
+        );
+    }
+    return (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6" data-testid="websites-grid">
+            {websites.map((w, idx) => (
+                <WebsiteCard
+                    key={w.id}
+                    website={w}
+                    color={CARD_COLORS[idx % CARD_COLORS.length]}
+                    onEdit={() => onEdit(w)}
+                    onDelete={() => onDelete(w.id)}
+                />
+            ))}
+        </div>
+    );
+};
 
 const Websites = () => {
     const [websites, setWebsites] = useState([]);
@@ -13,31 +140,31 @@ const Websites = () => {
     const [editingId, setEditingId] = useState(null);
     const [submitting, setSubmitting] = useState(false);
 
-    const load = async () => {
+    const load = useCallback(async () => {
         try {
             const res = await apiClient.get("/websites");
             setWebsites(res.data);
-        } catch (e) {
+        } catch {
             toast.error("Could not load websites");
         } finally {
             setLoading(false);
         }
-    };
+    }, []);
 
     useEffect(() => {
         load();
-    }, []);
-
-    const startEdit = (w) => {
-        setEditingId(w.id);
-        setForm({ name: w.name, url: w.url, description: w.description || "" });
-        setShowForm(true);
-    };
+    }, [load]);
 
     const reset = () => {
         setShowForm(false);
         setEditingId(null);
         setForm(emptyForm);
+    };
+
+    const startEdit = (w) => {
+        setEditingId(w.id);
+        setForm({ name: w.name, url: w.url, description: w.description || "" });
+        setShowForm(true);
     };
 
     const submit = async (e) => {
@@ -57,8 +184,8 @@ const Websites = () => {
             }
             reset();
             load();
-        } catch (e) {
-            toast.error(e.response?.data?.detail || "Failed");
+        } catch (err) {
+            toast.error(err.response?.data?.detail || "Failed");
         } finally {
             setSubmitting(false);
         }
@@ -70,7 +197,7 @@ const Websites = () => {
             await apiClient.delete(`/websites/${id}`);
             toast.success("Deleted");
             load();
-        } catch (e) {
+        } catch {
             toast.error("Could not delete");
         }
     };
@@ -98,109 +225,17 @@ const Websites = () => {
             </div>
 
             {showForm && (
-                <div className="nb-card p-6" data-testid="website-form">
-                    <div className="flex items-start justify-between">
-                        <h2 className="font-display font-bold text-2xl">{editingId ? "Edit website" : "Add a website"}</h2>
-                        <button className="nb-btn !p-2" onClick={reset} data-testid="form-close-btn">
-                            <X size={16} />
-                        </button>
-                    </div>
-                    <form onSubmit={submit} className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
-                        <div>
-                            <label className="label-uppercase">Name *</label>
-                            <input
-                                className="nb-input mt-2"
-                                placeholder="e.g. CollegeOp"
-                                value={form.name}
-                                onChange={(e) => setForm({ ...form, name: e.target.value })}
-                                data-testid="form-name-input"
-                            />
-                        </div>
-                        <div>
-                            <label className="label-uppercase">URL *</label>
-                            <input
-                                className="nb-input mt-2"
-                                placeholder="https://collegeop.com"
-                                value={form.url}
-                                onChange={(e) => setForm({ ...form, url: e.target.value })}
-                                data-testid="form-url-input"
-                            />
-                        </div>
-                        <div className="md:col-span-2">
-                            <label className="label-uppercase">Description (optional)</label>
-                            <input
-                                className="nb-input mt-2"
-                                placeholder="Short brand brief or audience notes"
-                                value={form.description}
-                                onChange={(e) => setForm({ ...form, description: e.target.value })}
-                                data-testid="form-desc-input"
-                            />
-                        </div>
-                        <div className="md:col-span-2 flex gap-3">
-                            <button type="submit" className="nb-btn nb-btn-mint" disabled={submitting} data-testid="form-submit-btn">
-                                {submitting ? <div className="nb-spinner" /> : <Check size={16} />}
-                                {editingId ? "Save" : "Add"}
-                            </button>
-                            <button type="button" className="nb-btn" onClick={reset} data-testid="form-cancel-btn">
-                                Cancel
-                            </button>
-                        </div>
-                    </form>
-                </div>
+                <WebsiteForm
+                    editingId={editingId}
+                    form={form}
+                    setForm={setForm}
+                    submitting={submitting}
+                    onSubmit={submit}
+                    onClose={reset}
+                />
             )}
 
-            {loading ? (
-                <div className="nb-card p-10 text-center">
-                    <div className="nb-spinner mx-auto" />
-                </div>
-            ) : websites.length === 0 ? (
-                <div className="nb-card p-10 text-center bg-white" data-testid="empty-websites">
-                    <Globe size={40} strokeWidth={2.5} className="mx-auto" />
-                    <h3 className="font-display font-bold text-2xl mt-4">No websites yet</h3>
-                    <p className="text-sm mt-2 font-medium max-w-md mx-auto">
-                        Add your first website to start generating AI ads. You can add multiple, edit or delete them anytime — no code changes ever needed.
-                    </p>
-                </div>
-            ) : (
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6" data-testid="websites-grid">
-                    {websites.map((w, idx) => (
-                        <div
-                            key={w.id}
-                            className={`nb-card nb-card-hover p-6 ${["bg-white", "bg-[#FFDBCB]", "bg-[#BAE6FD]", "bg-[#A7F3D0]", "bg-[#DDD6FE]"][idx % 5]}`}
-                            data-testid={`website-card-${w.id}`}
-                        >
-                            <div className="flex items-start justify-between">
-                                <div className="w-10 h-10 bg-white border-2 border-black flex items-center justify-center">
-                                    <Globe size={18} strokeWidth={2.5} />
-                                </div>
-                                <div className="flex gap-2">
-                                    <button
-                                        className="nb-btn !p-2 !shadow-[2px_2px_0_0_#000]"
-                                        onClick={() => startEdit(w)}
-                                        data-testid={`edit-website-${w.id}`}
-                                        title="Edit"
-                                    >
-                                        <Pencil size={14} />
-                                    </button>
-                                    <button
-                                        className="nb-btn nb-btn-danger !p-2 !shadow-[2px_2px_0_0_#000]"
-                                        onClick={() => remove(w.id)}
-                                        data-testid={`delete-website-${w.id}`}
-                                        title="Delete"
-                                    >
-                                        <Trash2 size={14} />
-                                    </button>
-                                </div>
-                            </div>
-                            <h3 className="font-display font-black text-xl mt-4 break-words">{w.name}</h3>
-                            <a href={w.url} target="_blank" rel="noreferrer" className="text-sm font-mono underline break-all mt-1 block" data-testid={`website-url-${w.id}`}>
-                                {w.url}
-                            </a>
-                            {w.description && <p className="text-sm mt-3 font-medium">{w.description}</p>}
-                        </div>
-                    ))}
-                </div>
-            )}
+            {renderWebsiteContent(loading, websites, startEdit, remove)}
         </div>
     );
 };
