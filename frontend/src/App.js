@@ -22,6 +22,7 @@ function App() {
                             background: "#fff",
                             color: "#000",
                             fontWeight: 600,
+                            zIndex: 9999,
                         },
                     }}
                 />
