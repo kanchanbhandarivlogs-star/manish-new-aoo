@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { apiClient, mediaUrl } from "@/lib/api";
-import { toast } from "sonner";
+import { useAdActions } from "@/hooks/useAdActions";
 import {
     Download, Trash2, CheckCircle2, Copy, ImagePlay, RefreshCw, X, Filter, Film,
 } from "lucide-react";
@@ -231,6 +231,21 @@ const GalleryBody = ({ loading, filtered, onFocus }) => {
     );
 };
 
+const GalleryPageHeader = ({ onRefresh }) => (
+    <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4">
+        <div>
+            <p className="label-uppercase">Library</p>
+            <h1 className="font-display font-black text-4xl sm:text-5xl uppercase mt-1">Ad Gallery</h1>
+            <p className="text-sm mt-2 max-w-xl font-medium">
+                Review, approve, copy captions, download images & videos. Post to Instagram / Facebook manually.
+            </p>
+        </div>
+        <button className="nb-btn" onClick={onRefresh} data-testid="refresh-btn">
+            <RefreshCw size={16} strokeWidth={2.5} /> Refresh
+        </button>
+    </div>
+);
+
 const Gallery = () => {
     const [ads, setAds] = useState([]);
     const [websites, setWebsites] = useState([]);
@@ -250,8 +265,8 @@ const Gallery = () => {
             setWebsites(sitesRes.data);
             const fid = searchParams.get("focus");
             if (fid) {
-                const f = adsRes.data.find((a) => a.id === fid);
-                if (f) setFocusAd(f);
+                const focused = adsRes.data.find((a) => a.id === fid);
+                if (focused) setFocusAd(focused);
             }
         } finally {
             setLoading(false);
@@ -263,8 +278,8 @@ const Gallery = () => {
             const r = await apiClient.get("/ads");
             setAds(r.data);
             setFocusAd((curr) => (curr ? r.data.find((a) => a.id === curr.id) || curr : curr));
-        } catch {
-            // silent poll
+        } catch (err) {
+            console.warn("Background ads poll failed", err);
         }
     }, []);
 
@@ -282,67 +297,14 @@ const Gallery = () => {
         [ads, status, websiteFilter]
     );
 
-    const updateStatus = async (id, newStatus) => {
-        try {
-            await apiClient.patch(`/ads/${id}/status`, { status: newStatus });
-            toast.success(`Marked ${newStatus}`);
-            load();
-        } catch {
-            toast.error("Could not update status");
-        }
-    };
-
-    const remove = async (id) => {
-        if (!window.confirm("Delete this ad? Images/video files will be removed.")) return;
-        try {
-            await apiClient.delete(`/ads/${id}`);
-            toast.success("Deleted");
-            setFocusAd(null);
-            load();
-        } catch {
-            toast.error("Could not delete");
-        }
-    };
-
-    const downloadFile = async (id, kind) => {
-        try {
-            const res = await apiClient.get(`/ads/${id}/download/${kind}`, { responseType: "blob" });
-            const url = window.URL.createObjectURL(new Blob([res.data]));
-            const a = document.createElement("a");
-            a.href = url;
-            a.download = `ad-${id}.${kind === "image" ? "png" : "mp4"}`;
-            document.body.appendChild(a);
-            a.click();
-            a.remove();
-            window.URL.revokeObjectURL(url);
-            toast.success(`Downloaded ${kind}`);
-            load();
-        } catch {
-            toast.error("Download failed");
-        }
-    };
-
-    const copyCaption = (ad) => {
-        const text = `${ad.caption}\n\n${(ad.hashtags || []).join(" ")}`;
-        navigator.clipboard.writeText(text);
-        toast.success("Caption copied");
-    };
+    const { updateStatus, remove, downloadFile, copyCaption } = useAdActions({
+        onChanged: load,
+        onDeleted: () => setFocusAd(null),
+    });
 
     return (
         <div className="space-y-6" data-testid="gallery-page">
-            <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4">
-                <div>
-                    <p className="label-uppercase">Library</p>
-                    <h1 className="font-display font-black text-4xl sm:text-5xl uppercase mt-1">Ad Gallery</h1>
-                    <p className="text-sm mt-2 max-w-xl font-medium">
-                        Review, approve, copy captions, download images & videos. Post to Instagram / Facebook manually.
-                    </p>
-                </div>
-                <button className="nb-btn" onClick={load} data-testid="refresh-btn">
-                    <RefreshCw size={16} strokeWidth={2.5} /> Refresh
-                </button>
-            </div>
-
+            <GalleryPageHeader onRefresh={load} />
             <Filters
                 status={status}
                 setStatus={setStatus}
@@ -350,9 +312,7 @@ const Gallery = () => {
                 setWebsiteFilter={setWebsiteFilter}
                 websites={websites}
             />
-
             <GalleryBody loading={loading} filtered={filtered} onFocus={setFocusAd} />
-
             {focusAd && (
                 <AdDetailModal
                     ad={focusAd}

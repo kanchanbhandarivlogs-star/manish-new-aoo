@@ -72,6 +72,70 @@ const RecentAdsSection = ({ loading, recent }) => {
     );
 };
 
+const HeroBanner = () => (
+    <div className="nb-card p-6 md:p-10 bg-[#FFD84D]" data-testid="hero-card">
+        <p className="label-uppercase">Welcome back, marketer</p>
+        <h1 className="font-display font-black text-4xl sm:text-5xl lg:text-6xl uppercase mt-2 leading-[0.95]">
+            Ship scroll-stopping
+            <br />
+            ads. <span className="bg-black text-white px-3">Every day.</span>
+        </h1>
+        <p className="text-base md:text-lg font-medium mt-4 max-w-2xl">
+            Plug in any website, let the AI engine cook captions, banner images and short video ads — you review,
+            download, and post.
+        </p>
+        <div className="flex flex-wrap gap-3 mt-6">
+            <Link to="/generate" className="nb-btn nb-btn-primary" data-testid="hero-generate-btn">
+                <Sparkles size={16} strokeWidth={2.5} /> Generate New Ad
+            </Link>
+            <Link to="/websites" className="nb-btn" data-testid="hero-websites-btn">
+                <Globe size={16} strokeWidth={2.5} /> Manage Websites
+            </Link>
+        </div>
+    </div>
+);
+
+const StatsGrid = ({ stats }) => (
+    <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 md:gap-6" data-testid="stats-grid">
+        <StatCard label="Total Ads"  value={stats.total_ads}  color="bg-white"     icon={ImagePlay}    testid="stat-total" />
+        <StatCard label="Drafts"     value={stats.drafts}     color="bg-[#F3F4F6]" icon={Clock}        testid="stat-drafts" />
+        <StatCard label="Approved"   value={stats.approved}   color="bg-[#A7F3D0]" icon={CheckCircle2} testid="stat-approved" />
+        <StatCard label="Downloaded" value={stats.downloaded} color="bg-[#DDD6FE]" icon={Download}     testid="stat-downloaded" />
+    </div>
+);
+
+const PeakTimesSection = () => (
+    <div>
+        <div className="flex items-end justify-between mb-4">
+            <div>
+                <p className="label-uppercase">When to post</p>
+                <h2 className="font-display font-bold text-2xl md:text-3xl mt-1">Peak Student Traffic Hours</h2>
+            </div>
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 md:gap-6" data-testid="peak-times-grid">
+            {PEAK_SLOTS.map((slot) => (
+                <div key={slot.id} className={`nb-card p-6 ${slot.bg}`} data-testid={`peak-slot-${slot.id}`}>
+                    <p className="label-uppercase">{slot.label}</p>
+                    <p className="font-display font-black text-3xl mt-2">{slot.time}</p>
+                    <p className="text-sm mt-3 font-medium">{slot.reason}</p>
+                </div>
+            ))}
+        </div>
+    </div>
+);
+
+const RecentAdsHeader = () => (
+    <div className="flex items-end justify-between mb-4">
+        <div>
+            <p className="label-uppercase">Latest output</p>
+            <h2 className="font-display font-bold text-2xl md:text-3xl mt-1">Recent Ads</h2>
+        </div>
+        <Link to="/gallery" className="nb-btn nb-btn-lavender hidden sm:inline-flex" data-testid="view-all-ads-btn">
+            View all <ArrowRight size={16} />
+        </Link>
+    </div>
+);
+
 const Dashboard = () => {
     const [stats, setStats] = useState({
         total_ads: 0, drafts: 0, approved: 0, downloaded: 0, websites: 0, pending_videos: 0,
@@ -100,62 +164,11 @@ const Dashboard = () => {
 
     return (
         <div className="space-y-8" data-testid="dashboard-page">
-            <div className="nb-card p-6 md:p-10 bg-[#FFD84D]" data-testid="hero-card">
-                <p className="label-uppercase">Welcome back, marketer</p>
-                <h1 className="font-display font-black text-4xl sm:text-5xl lg:text-6xl uppercase mt-2 leading-[0.95]">
-                    Ship scroll-stopping
-                    <br />
-                    ads. <span className="bg-black text-white px-3">Every day.</span>
-                </h1>
-                <p className="text-base md:text-lg font-medium mt-4 max-w-2xl">
-                    Plug in any website, let the AI engine cook captions, banner images and short video ads — you review,
-                    download, and post.
-                </p>
-                <div className="flex flex-wrap gap-3 mt-6">
-                    <Link to="/generate" className="nb-btn nb-btn-primary" data-testid="hero-generate-btn">
-                        <Sparkles size={16} strokeWidth={2.5} /> Generate New Ad
-                    </Link>
-                    <Link to="/websites" className="nb-btn" data-testid="hero-websites-btn">
-                        <Globe size={16} strokeWidth={2.5} /> Manage Websites
-                    </Link>
-                </div>
-            </div>
-
-            <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 md:gap-6" data-testid="stats-grid">
-                <StatCard label="Total Ads"  value={stats.total_ads}  color="bg-white"        icon={ImagePlay}    testid="stat-total" />
-                <StatCard label="Drafts"     value={stats.drafts}     color="bg-[#F3F4F6]"    icon={Clock}        testid="stat-drafts" />
-                <StatCard label="Approved"   value={stats.approved}   color="bg-[#A7F3D0]"    icon={CheckCircle2} testid="stat-approved" />
-                <StatCard label="Downloaded" value={stats.downloaded} color="bg-[#DDD6FE]"    icon={Download}     testid="stat-downloaded" />
-            </div>
-
+            <HeroBanner />
+            <StatsGrid stats={stats} />
+            <PeakTimesSection />
             <div>
-                <div className="flex items-end justify-between mb-4">
-                    <div>
-                        <p className="label-uppercase">When to post</p>
-                        <h2 className="font-display font-bold text-2xl md:text-3xl mt-1">Peak Student Traffic Hours</h2>
-                    </div>
-                </div>
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 md:gap-6" data-testid="peak-times-grid">
-                    {PEAK_SLOTS.map((slot) => (
-                        <div key={slot.id} className={`nb-card p-6 ${slot.bg}`} data-testid={`peak-slot-${slot.id}`}>
-                            <p className="label-uppercase">{slot.label}</p>
-                            <p className="font-display font-black text-3xl mt-2">{slot.time}</p>
-                            <p className="text-sm mt-3 font-medium">{slot.reason}</p>
-                        </div>
-                    ))}
-                </div>
-            </div>
-
-            <div>
-                <div className="flex items-end justify-between mb-4">
-                    <div>
-                        <p className="label-uppercase">Latest output</p>
-                        <h2 className="font-display font-bold text-2xl md:text-3xl mt-1">Recent Ads</h2>
-                    </div>
-                    <Link to="/gallery" className="nb-btn nb-btn-lavender hidden sm:inline-flex" data-testid="view-all-ads-btn">
-                        View all <ArrowRight size={16} />
-                    </Link>
-                </div>
+                <RecentAdsHeader />
                 <RecentAdsSection loading={loading} recent={recent} />
             </div>
         </div>

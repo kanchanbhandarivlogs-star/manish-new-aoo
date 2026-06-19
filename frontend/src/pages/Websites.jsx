@@ -132,6 +132,25 @@ const renderWebsiteContent = (loading, websites, onEdit, onDelete) => {
     );
 };
 
+const WebsitesPageHeader = ({ onAdd }) => (
+    <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4">
+        <div>
+            <p className="label-uppercase">Manage</p>
+            <h1 className="font-display font-black text-4xl sm:text-5xl uppercase mt-1">Your Websites</h1>
+            <p className="text-sm mt-2 max-w-xl font-medium">
+                Add any number of websites. We&apos;ll scrape content and generate ads on demand. Delete or rename anytime.
+            </p>
+        </div>
+        <button
+            className="nb-btn nb-btn-primary"
+            onClick={onAdd}
+            data-testid="add-website-btn"
+        >
+            <Plus size={16} strokeWidth={2.5} /> Add Website
+        </button>
+    </div>
+);
+
 const Websites = () => {
     const [websites, setWebsites] = useState([]);
     const [loading, setLoading] = useState(true);
@@ -204,26 +223,12 @@ const Websites = () => {
 
     return (
         <div className="space-y-6" data-testid="websites-page">
-            <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4">
-                <div>
-                    <p className="label-uppercase">Manage</p>
-                    <h1 className="font-display font-black text-4xl sm:text-5xl uppercase mt-1">Your Websites</h1>
-                    <p className="text-sm mt-2 max-w-xl font-medium">
-                        Add any number of websites. We&apos;ll scrape content and generate ads on demand. Delete or rename anytime.
-                    </p>
-                </div>
-                <button
-                    className="nb-btn nb-btn-primary"
-                    onClick={() => {
-                        reset();
-                        setShowForm(true);
-                    }}
-                    data-testid="add-website-btn"
-                >
-                    <Plus size={16} strokeWidth={2.5} /> Add Website
-                </button>
-            </div>
-
+            <WebsitesPageHeader
+                onAdd={() => {
+                    reset();
+                    setShowForm(true);
+                }}
+            />
             {showForm && (
                 <WebsiteForm
                     editingId={editingId}
@@ -234,7 +239,6 @@ const Websites = () => {
                     onClose={reset}
                 />
             )}
-
             {renderWebsiteContent(loading, websites, startEdit, remove)}
         </div>
     );

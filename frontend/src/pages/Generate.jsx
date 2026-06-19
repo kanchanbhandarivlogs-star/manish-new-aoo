@@ -206,6 +206,36 @@ const ProgressPanel = ({ generating, progressStep }) => (
     </div>
 );
 
+const PageIntro = () => (
+    <div>
+        <p className="label-uppercase">Create</p>
+        <h1 className="font-display font-black text-4xl sm:text-5xl uppercase mt-1">Generate Ad</h1>
+        <p className="text-sm mt-2 max-w-xl font-medium">
+            Pick a website (optional), drop a topic, and let the AI cook captions, banner image & short video ad.
+        </p>
+    </div>
+);
+
+const GenerateButton = ({ generating, onClick }) => (
+    <button
+        className="nb-btn nb-btn-primary w-full !py-5 !text-base"
+        onClick={onClick}
+        disabled={generating}
+        data-testid="generate-btn"
+    >
+        {generating ? (
+            <>
+                <div className="nb-spinner" /> Generating...
+            </>
+        ) : (
+            <>
+                <Sparkles size={18} strokeWidth={2.5} /> Generate Ad
+                <ChevronRight size={18} />
+            </>
+        )}
+    </button>
+);
+
 const Generate = () => {
     const navigate = useNavigate();
     const [websites, setWebsites] = useState([]);
@@ -225,8 +255,8 @@ const Generate = () => {
         try {
             const r = await apiClient.get("/websites");
             setWebsites(r.data);
-        } catch {
-            // silent — page still works without websites
+        } catch (err) {
+            console.warn("Failed to load websites for picker", err);
         }
     }, []);
 
@@ -291,14 +321,7 @@ const Generate = () => {
 
     return (
         <div className="space-y-6" data-testid="generate-page">
-            <div>
-                <p className="label-uppercase">Create</p>
-                <h1 className="font-display font-black text-4xl sm:text-5xl uppercase mt-1">Generate Ad</h1>
-                <p className="text-sm mt-2 max-w-xl font-medium">
-                    Pick a website (optional), drop a topic, and let the AI cook captions, banner image & short video ad.
-                </p>
-            </div>
-
+            <PageIntro />
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
                 <div className="lg:col-span-2 space-y-6">
                     <WebsitePicker
@@ -319,25 +342,8 @@ const Generate = () => {
                         videoDuration={videoDuration} setVideoDuration={setVideoDuration}
                         videoSize={videoSize} setVideoSize={setVideoSize}
                     />
-                    <button
-                        className="nb-btn nb-btn-primary w-full !py-5 !text-base"
-                        onClick={handleGenerate}
-                        disabled={generating}
-                        data-testid="generate-btn"
-                    >
-                        {generating ? (
-                            <>
-                                <div className="nb-spinner" /> Generating...
-                            </>
-                        ) : (
-                            <>
-                                <Sparkles size={18} strokeWidth={2.5} /> Generate Ad
-                                <ChevronRight size={18} />
-                            </>
-                        )}
-                    </button>
+                    <GenerateButton generating={generating} onClick={handleGenerate} />
                 </div>
-
                 <div className="lg:col-span-1">
                     <ProgressPanel generating={generating} progressStep={progressStep} />
                 </div>
