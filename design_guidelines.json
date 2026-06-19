@@ -1,0 +1,85 @@
+{
+  "theme": "Archetype 3: Pastel & Soft (Neo-Brutalist Twist, Light Theme)",
+  "rationale": "For an Indian college audience (Gen Z) and marketers at collegeop.com, standard SaaS blue is invisible. A Neo-Brutalist approach with pastel color blocking, hard black lines, and unapologetic borders creates an approachable, high-energy, and highly legible dashboard for social media ad management.",
+  "typography": {
+    "heading_font": "Outfit",
+    "body_font": "Figtree",
+    "hierarchy": {
+      "h1": "text-4xl sm:text-5xl tracking-tighter font-black uppercase text-black",
+      "h2": "text-2xl sm:text-3xl tracking-tight font-bold text-black",
+      "h3": "text-xl sm:text-2xl font-bold text-black",
+      "h4": "text-lg sm:text-xl font-bold text-black",
+      "body": "text-base leading-relaxed font-medium text-neutral-900",
+      "labels": "text-xs tracking-[0.2em] uppercase font-black text-neutral-900"
+    }
+  },
+  "colors": {
+    "background": "bg-[#F5F5F5]",
+    "surface": "bg-white",
+    "text_primary": "text-black",
+    "text_secondary": "text-neutral-800",
+    "borders": "border-black",
+    "accents": {
+      "primary_yellow": "bg-[#FFD84D]",
+      "soft_mint": "bg-[#A7F3D0]",
+      "lavender": "bg-[#DDD6FE]",
+      "peach": "bg-[#FFDBCB]",
+      "sky_blue": "bg-[#BAE6FD]"
+    },
+    "status": {
+      "draft": "bg-[#F3F4F6] text-black border-2 border-black font-bold",
+      "approved": "bg-[#A7F3D0] text-black border-2 border-black font-bold",
+      "downloaded": "bg-[#DDD6FE] text-black border-2 border-black font-bold"
+    }
+  },
+  "layout_and_spacing": {
+    "grid_system": "Mode B: The 'Control Room' Grid. Strict grid hierarchy for dashboard panels. Use gap-6 or gap-8. Every pixel utilized.",
+    "container_padding": "p-6 md:p-8",
+    "surfaces": {
+      "card_style": "bg-white border-2 border-black rounded-none shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] hover:shadow-[6px_6px_0px_0px_rgba(0,0,0,1)] hover:-translate-y-0.5 transition-all duration-200 ease-in-out p-6",
+      "button_primary": "bg-[#FFD84D] text-black border-2 border-black rounded-none shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] hover:shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] hover:translate-y-[2px] transition-all duration-200 font-bold px-6 py-3 uppercase tracking-wider",
+      "button_secondary": "bg-white text-black border-2 border-black rounded-none shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] hover:shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] hover:translate-y-[2px] transition-all duration-200 font-bold px-6 py-3 uppercase tracking-wider",
+      "input_style": "bg-white text-black border-2 border-black rounded-none shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] focus:ring-0 focus:outline-none focus:shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] transition-all px-4 py-3"
+    }
+  },
+  "components_instructions": {
+    "sidebar_navigation": "Solid pastel background (e.g., Lavender or soft gray) with a thick 2px black right border. Navigation items should have generous padding. Active links get a solid black background with white text, or a vibrant pastel block with black text and border.",
+    "websites_manager_table": "Use standard HTML elements nested in a Neo-Brutalist card. Headers need thick bottom borders (border-b-2 border-black). Striped rows with very subtle gray, strong black text.",
+    "gallery_grid": "Bento layout for the ad library. Images MUST NOT exceed 80vh. The generated ads (images/videos) should be inside cards with thick borders.",
+    "status_badges": "Square or slightly rounded (rounded-sm) blocks with border-2 border-black. High contrast font.",
+    "modals_dialogs": "No glassmorphism. Use a solid black backdrop (bg-black/60). The modal itself must be a solid white or pastel card with border-2 border-black and large shadow-[8px_8px_0px_0px_rgba(0,0,0,1)].",
+    "charts_stats": "Dashboard stats should use massive fonts (text-5xl or text-6xl) with tight tracking. Use pastel backgrounds for different metric cards (e.g., Yellow for Drafts, Mint for Approved, Blue for Downloaded).",
+    "testing": "CRITICAL: All interactive and key informational elements MUST include a data-testid attribute in kebab-case."
+  },
+  "media": {
+    "icons": {
+      "library": "lucide-react",
+      "style": "Stroke width 2.5 or 3, strict black, no gradients."
+    },
+    "image_urls": [
+      {
+        "category": "empty_state_dashboard",
+        "url": "https://images.pexels.com/photos/7616700/pexels-photo-7616700.jpeg",
+        "description": "Group of diverse college students studying. Use this for empty states or welcome banners to keep the college context alive."
+      },
+      {
+        "category": "social_media_placeholder",
+        "url": "https://images.unsplash.com/photo-1724862936518-ae7fcfc052c1",
+        "description": "Person holding a smartphone showing social media. Use as a fallback placeholder for ad previews before generation."
+      },
+      {
+        "category": "auth_background",
+        "url": "https://images.unsplash.com/photo-1496167117681-944f702be1f4",
+        "description": "Pastel geometric polyhedral wall. Perfect for the login screen background to match the Neo-Brutalist/Pastel vibe."
+      }
+    ]
+  },
+  "developer_instructions": [
+    "Use JS/JSX only. Do not use TypeScript.",
+    "Avoid Shadcn 'Card' wrappers if they restrict raw HTML structures; build Neo-Brutalist cards manually with divs to ensure the heavy shadows and borders work perfectly.",
+    "For interactive logic (Dropdowns, Tabs), you may use Shadcn primitives but OVERRIDE their default Vercel-like styling to match the hard borders and solid colors specified in surfaces.",
+    "Add data-testid attributes to ALL buttons, inputs, links, and major layout sections.",
+    "Never use generic light grays for text. All text must be high-contrast text-black or text-neutral-900.",
+    "Use 'react-fast-marquee' for a slow-moving ticker at the top of the dashboard showing peak traffic times or recent ad generation status."
+  ]
+}
