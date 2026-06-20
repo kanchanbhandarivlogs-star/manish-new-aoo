@@ -15,12 +15,26 @@ from typing import Any, Dict, List, Literal, Optional
 import requests
 from bs4 import BeautifulSoup
 from dotenv import load_dotenv
-from fastapi import APIRouter, BackgroundTasks, FastAPI, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, FastAPI, HTTPException
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel, ConfigDict, Field
 from starlette.middleware.cors import CORSMiddleware
+
+from auth import (
+    LoginPayload,
+    RegisterPayload,
+    User,
+    UserPublic,
+    WalletTopUpPayload,
+    create_access_token,
+    get_current_user,
+    hash_password,
+    require_admin,
+    seed_admin,
+    verify_password,
+)
 
 # ---------------------- ENV ----------------------
 ROOT_DIR = Path(__file__).parent
@@ -44,8 +58,63 @@ db = client[os.environ["DB_NAME"]]
 
 # ---------------------- FASTAPI ----------------------
 app = FastAPI(title="AI Ads Studio")
+app.state.db = db  # expose for auth dependency
 api_router = APIRouter(prefix="/api")
 app.mount("/api/media", StaticFiles(directory=str(MEDIA_DIR)), name="media")
+
+# ---------------------- CREDIT PRICING ----------------------
+PRICING = {
+    "image": 5,
+    "video_4s": 30,
+    "video_8s": 60,
+    "video_12s": 90,
+    "variant": 5,
+    "auto_gen": 5,
+}
+
+
+def _video_cost(duration: int) -> int:
+    return PRICING.get(f"video_{duration}s", 30)
+
+
+async def _charge_user(user_id: str, amount: int, reason: str) -> None:
+    """Atomic deduct from wallet; raise 402 if insufficient. Also logs txn."""
+    res = await db.users.find_one_and_update(
+        {"id": user_id, "wallet_balance": {"$gte": amount}},
+        {"$inc": {"wallet_balance": -amount}},
+        projection={"_id": 0, "wallet_balance": 1},
+    )
+    if not res:
+        raise HTTPException(
+            402,
+            f"Insufficient wallet balance. Need {amount} credits for {reason}. Ask admin to top-up.",
+        )
+    await db.wallet_txns.insert_one({
+        "id": str(uuid.uuid4()),
+        "user_id": user_id,
+        "amount": -amount,
+        "reason": reason,
+        "created_at": now_iso(),
+    })
+
+
+async def _credit_user(user_id: str, amount: int, note: str) -> Dict[str, Any]:
+    res = await db.users.find_one_and_update(
+        {"id": user_id},
+        {"$inc": {"wallet_balance": amount}},
+        return_document=True,
+        projection={"_id": 0, "password_hash": 0},
+    )
+    if not res:
+        raise HTTPException(404, "User not found")
+    await db.wallet_txns.insert_one({
+        "id": str(uuid.uuid4()),
+        "user_id": user_id,
+        "amount": amount,
+        "reason": f"admin topup: {note}" if note else "admin topup",
+        "created_at": now_iso(),
+    })
+    return res
 
 
 # ---------------------- MODELS ----------------------
@@ -56,6 +125,7 @@ def now_iso() -> str:
 class Website(BaseModel):
     model_config = ConfigDict(extra="ignore")
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    owner_id: str = ""
     name: str
     url: str
     description: Optional[str] = ""
@@ -63,6 +133,12 @@ class Website(BaseModel):
     lead_form_url: Optional[str] = ""
     lead_webhook_url: Optional[str] = ""
     whatsapp_number: Optional[str] = ""
+    # Per-website Meta credentials
+    fb_access_token: Optional[str] = ""
+    fb_page_id: Optional[str] = ""
+    ig_account_id: Optional[str] = ""
+    telegram_bot_token: Optional[str] = ""
+    telegram_chat_id: Optional[str] = ""
     auto_generate: bool = False
     last_auto_run_at: Optional[str] = None
     created_at: str = Field(default_factory=now_iso)
@@ -76,6 +152,11 @@ class WebsiteCreate(BaseModel):
     lead_form_url: Optional[str] = ""
     lead_webhook_url: Optional[str] = ""
     whatsapp_number: Optional[str] = ""
+    fb_access_token: Optional[str] = ""
+    fb_page_id: Optional[str] = ""
+    ig_account_id: Optional[str] = ""
+    telegram_bot_token: Optional[str] = ""
+    telegram_chat_id: Optional[str] = ""
     auto_generate: bool = False
 
 
@@ -87,6 +168,11 @@ class WebsiteUpdate(BaseModel):
     lead_form_url: Optional[str] = None
     lead_webhook_url: Optional[str] = None
     whatsapp_number: Optional[str] = None
+    fb_access_token: Optional[str] = None
+    fb_page_id: Optional[str] = None
+    ig_account_id: Optional[str] = None
+    telegram_bot_token: Optional[str] = None
+    telegram_chat_id: Optional[str] = None
     auto_generate: Optional[bool] = None
 
 
@@ -149,6 +235,7 @@ class MetaSettings(BaseModel):
 class Lead(BaseModel):
     model_config = ConfigDict(extra="ignore")
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    owner_id: str = ""
     website_id: str
     website_name: Optional[str] = ""
     name: str
@@ -348,21 +435,8 @@ def _build_cta_lines(site: Optional[Dict[str, Any]]) -> str:
     return "\n".join(lines)
 
 
-def _send_telegram_notification(text: str) -> bool:
-    """Post a Markdown message to Telegram if bot credentials are configured."""
-    try:
-        # synchronous loader works because called from sync context only as fire-and-forget
-        from pymongo import MongoClient
-
-        sync_client = MongoClient(os.environ["MONGO_URL"])
-        doc = sync_client[os.environ["DB_NAME"]].meta_settings.find_one({}, {"_id": 0})
-        sync_client.close()
-    except Exception:  # noqa: BLE001
-        return False
-    if not doc:
-        return False
-    token = (doc.get("telegram_bot_token") or "").strip()
-    chat_id = (doc.get("telegram_chat_id") or "").strip()
+def _send_telegram_notification(token: str, chat_id: str, text: str) -> bool:
+    """Post a Markdown message to Telegram using provided credentials."""
     if not token or not chat_id:
         return False
     try:
@@ -385,24 +459,28 @@ async def root() -> Dict[str, str]:
 
 # ---------------------- ROUTES: WEBSITES ----------------------
 @api_router.post("/websites", response_model=Website)
-async def create_website(payload: WebsiteCreate) -> Website:
-    site = Website(**payload.model_dump())
+async def create_website(payload: WebsiteCreate, user=Depends(get_current_user)) -> Website:
+    site = Website(owner_id=user["id"], **payload.model_dump())
     await db.websites.insert_one(site.model_dump())
     return site
 
 
 @api_router.get("/websites", response_model=List[Website])
-async def list_websites() -> List[Dict[str, Any]]:
-    return await db.websites.find({}, {"_id": 0}).sort("created_at", -1).to_list(500)
+async def list_websites(user=Depends(get_current_user)) -> List[Dict[str, Any]]:
+    q: Dict[str, Any] = {} if user["role"] == "admin" else {"owner_id": user["id"]}
+    return await db.websites.find(q, {"_id": 0}).sort("created_at", -1).to_list(500)
 
 
 @api_router.patch("/websites/{wid}", response_model=Website)
-async def update_website(wid: str, payload: WebsiteUpdate) -> Dict[str, Any]:
+async def update_website(wid: str, payload: WebsiteUpdate, user=Depends(get_current_user)) -> Dict[str, Any]:
+    q: Dict[str, Any] = {"id": wid}
+    if user["role"] != "admin":
+        q["owner_id"] = user["id"]
     update_doc = {k: v for k, v in payload.model_dump().items() if v is not None}
     if not update_doc:
         raise HTTPException(400, "No fields to update")
     result = await db.websites.find_one_and_update(
-        {"id": wid}, {"$set": update_doc}, return_document=True, projection={"_id": 0}
+        q, {"$set": update_doc}, return_document=True, projection={"_id": 0}
     )
     if not result:
         raise HTTPException(404, "Website not found")
@@ -410,8 +488,11 @@ async def update_website(wid: str, payload: WebsiteUpdate) -> Dict[str, Any]:
 
 
 @api_router.delete("/websites/{wid}")
-async def delete_website(wid: str) -> Dict[str, bool]:
-    result = await db.websites.delete_one({"id": wid})
+async def delete_website(wid: str, user=Depends(get_current_user)) -> Dict[str, bool]:
+    q: Dict[str, Any] = {"id": wid}
+    if user["role"] != "admin":
+        q["owner_id"] = user["id"]
+    result = await db.websites.delete_one(q)
     if result.deleted_count == 0:
         raise HTTPException(404, "Website not found")
     return {"ok": True}
@@ -419,7 +500,7 @@ async def delete_website(wid: str) -> Dict[str, bool]:
 
 # ---------------------- ROUTES: SCRAPE ----------------------
 @api_router.post("/scrape")
-async def scrape(payload: ScrapeRequest) -> Dict[str, str]:
+async def scrape(payload: ScrapeRequest, user=Depends(get_current_user)) -> Dict[str, str]:
     try:
         return await _scrape_url(payload.url)
     except Exception as e:  # noqa: BLE001
@@ -429,11 +510,23 @@ async def scrape(payload: ScrapeRequest) -> Dict[str, str]:
 # ---------------------- ROUTES: GENERATE ----------------------
 @api_router.post("/ads/generate", response_model=Ad)
 async def generate_ad(
-    payload: GenerateRequest, background_tasks: BackgroundTasks
+    payload: GenerateRequest, background_tasks: BackgroundTasks, user=Depends(get_current_user)
 ) -> Ad:
     """Generate caption + image inline; video is queued in background."""
     site = await _resolve_website(payload.website_id)
+    if site and user["role"] != "admin" and site.get("owner_id") != user["id"]:
+        raise HTTPException(403, "Not your website")
     website_name = site["name"] if site else None
+
+    # ---- charge wallet first ----
+    cost = 0
+    if payload.include_image:
+        cost += PRICING["image"]
+    if payload.include_video:
+        cost += _video_cost(payload.video_duration)
+    if cost == 0:
+        cost = 1  # caption-only baseline
+    await _charge_user(user["id"], cost, "ad generation")
 
     raw = await _llm_text(_CREATIVE_SYSTEM, _build_creative_prompt(payload, website_name))
     parsed = _parse_creative_json(raw)
@@ -445,6 +538,7 @@ async def generate_ad(
         caption_text = f"{caption_text}\n\n{cta}"
     ad = Ad(
         id=ad_id,
+        owner_id=user["id"],
         website_id=payload.website_id,
         website_name=website_name,
         topic=payload.topic,
@@ -495,9 +589,9 @@ async def _video_task(ad_id: str, prompt: str, duration: int, size: str) -> None
 # ---------------------- ROUTES: ADS ----------------------
 @api_router.get("/ads", response_model=List[Ad])
 async def list_ads(
-    website_id: Optional[str] = None, status: Optional[str] = None
+    website_id: Optional[str] = None, status: Optional[str] = None, user=Depends(get_current_user)
 ) -> List[Dict[str, Any]]:
-    q: Dict[str, Any] = {}
+    q: Dict[str, Any] = {} if user["role"] == "admin" else {"owner_id": user["id"]}
     if website_id:
         q["website_id"] = website_id
     if status:
@@ -506,20 +600,24 @@ async def list_ads(
 
 
 @api_router.get("/ads/{ad_id}", response_model=Ad)
-async def get_ad(ad_id: str) -> Dict[str, Any]:
-    doc = await db.ads.find_one({"id": ad_id}, {"_id": 0})
+async def get_ad(ad_id: str, user=Depends(get_current_user)) -> Dict[str, Any]:
+    q: Dict[str, Any] = {"id": ad_id}
+    if user["role"] != "admin":
+        q["owner_id"] = user["id"]
+    doc = await db.ads.find_one(q, {"_id": 0})
     if not doc:
         raise HTTPException(404, "Ad not found")
     return doc
 
 
 @api_router.patch("/ads/{ad_id}/status", response_model=Ad)
-async def update_ad_status(ad_id: str, payload: StatusUpdate) -> Dict[str, Any]:
+async def update_ad_status(ad_id: str, payload: StatusUpdate, user=Depends(get_current_user)) -> Dict[str, Any]:
+    q: Dict[str, Any] = {"id": ad_id}
+    if user["role"] != "admin":
+        q["owner_id"] = user["id"]
     result = await db.ads.find_one_and_update(
-        {"id": ad_id},
-        {"$set": {"status": payload.status}},
-        return_document=True,
-        projection={"_id": 0},
+        q, {"$set": {"status": payload.status}},
+        return_document=True, projection={"_id": 0},
     )
     if not result:
         raise HTTPException(404, "Ad not found")
@@ -527,8 +625,11 @@ async def update_ad_status(ad_id: str, payload: StatusUpdate) -> Dict[str, Any]:
 
 
 @api_router.delete("/ads/{ad_id}")
-async def delete_ad(ad_id: str) -> Dict[str, bool]:
-    doc = await db.ads.find_one({"id": ad_id})
+async def delete_ad(ad_id: str, user=Depends(get_current_user)) -> Dict[str, bool]:
+    q: Dict[str, Any] = {"id": ad_id}
+    if user["role"] != "admin":
+        q["owner_id"] = user["id"]
+    doc = await db.ads.find_one(q)
     if not doc:
         raise HTTPException(404, "Ad not found")
     for key in ("image_path", "video_path"):
@@ -538,7 +639,7 @@ async def delete_ad(ad_id: str) -> Dict[str, bool]:
                 (MEDIA_DIR / rel).unlink(missing_ok=True)
             except OSError:
                 pass
-    await db.ads.delete_one({"id": ad_id})
+    await db.ads.delete_one(q)
     return {"ok": True}
 
 
@@ -568,31 +669,110 @@ async def download_video(ad_id: str) -> FileResponse:
 
 # ---------------------- ROUTES: STATS ----------------------
 @api_router.get("/stats")
-async def stats() -> Dict[str, int]:
+async def stats(user=Depends(get_current_user)) -> Dict[str, int]:
+    base: Dict[str, Any] = {} if user["role"] == "admin" else {"owner_id": user["id"]}
     return {
-        "total_ads": await db.ads.count_documents({}),
-        "drafts": await db.ads.count_documents({"status": "draft"}),
-        "approved": await db.ads.count_documents({"status": "approved"}),
-        "downloaded": await db.ads.count_documents({"status": "downloaded"}),
-        "websites": await db.websites.count_documents({}),
-        "pending_videos": await db.ads.count_documents({"video_status": "pending"}),
+        "total_ads": await db.ads.count_documents(base),
+        "drafts": await db.ads.count_documents({**base, "status": "draft"}),
+        "approved": await db.ads.count_documents({**base, "status": "approved"}),
+        "downloaded": await db.ads.count_documents({**base, "status": "downloaded"}),
+        "websites": await db.websites.count_documents(base),
+        "pending_videos": await db.ads.count_documents({**base, "video_status": "pending"}),
+        "leads": await db.leads.count_documents(base),
     }
 
 
-# ---------------------- ROUTES: META SETTINGS ----------------------
-@api_router.get("/meta-settings")
-async def get_meta_settings() -> Dict[str, Any]:
-    doc = await db.meta_settings.find_one({}, {"_id": 0})
-    if not doc:
-        return {"fb_access_token": "", "fb_page_id": "", "ig_account_id": ""}
-    return doc
+# ---------------------- ROUTES: AUTH ----------------------
+@api_router.post("/auth/register")
+async def register(payload: RegisterPayload) -> Dict[str, Any]:
+    email = payload.email.lower().strip()
+    if await db.users.find_one({"email": email}):
+        raise HTTPException(400, "Email already registered")
+    user = User(email=email, name=payload.name or "", role="owner", wallet_balance=0)
+    doc = user.model_dump()
+    doc["password_hash"] = hash_password(payload.password)
+    await db.users.insert_one(doc)
+    token = create_access_token(user.id, user.email, user.role)
+    return {"token": token, "user": UserPublic(**user.model_dump()).model_dump()}
 
 
-@api_router.put("/meta-settings")
-async def upsert_meta_settings(payload: MetaSettings) -> MetaSettings:
-    payload.updated_at = now_iso()
-    await db.meta_settings.update_one({}, {"$set": payload.model_dump()}, upsert=True)
-    return payload
+@api_router.post("/auth/login")
+async def login(payload: LoginPayload) -> Dict[str, Any]:
+    email = payload.email.lower().strip()
+    user = await db.users.find_one({"email": email})
+    if not user or not verify_password(payload.password, user.get("password_hash", "")):
+        raise HTTPException(401, "Invalid email or password")
+    token = create_access_token(user["id"], user["email"], user.get("role", "owner"))
+    user.pop("password_hash", None)
+    user.pop("_id", None)
+    return {"token": token, "user": user}
+
+
+@api_router.get("/auth/me")
+async def me(user=Depends(get_current_user)) -> Dict[str, Any]:
+    return user
+
+
+# ---------------------- ROUTES: WALLET ----------------------
+@api_router.get("/wallet")
+async def wallet(user=Depends(get_current_user)) -> Dict[str, Any]:
+    txns = await db.wallet_txns.find(
+        {"user_id": user["id"]}, {"_id": 0}
+    ).sort("created_at", -1).to_list(200)
+    return {"balance": user.get("wallet_balance", 0), "transactions": txns, "pricing": PRICING}
+
+
+# ---------------------- ROUTES: ADMIN ----------------------
+@api_router.get("/admin/users", response_model=List[UserPublic])
+async def admin_list_users(_admin=Depends(require_admin)) -> List[Dict[str, Any]]:
+    docs = await db.users.find({}, {"_id": 0, "password_hash": 0}).sort("created_at", -1).to_list(500)
+    return docs
+
+
+@api_router.post("/admin/users", response_model=UserPublic)
+async def admin_create_user(payload: RegisterPayload, _admin=Depends(require_admin)) -> Dict[str, Any]:
+    email = payload.email.lower().strip()
+    if await db.users.find_one({"email": email}):
+        raise HTTPException(400, "Email already exists")
+    user = User(email=email, name=payload.name or "", role="owner", wallet_balance=0)
+    doc = user.model_dump()
+    doc["password_hash"] = hash_password(payload.password)
+    await db.users.insert_one(doc)
+    return UserPublic(**user.model_dump()).model_dump()
+
+
+@api_router.delete("/admin/users/{uid}")
+async def admin_delete_user(uid: str, _admin=Depends(require_admin)) -> Dict[str, bool]:
+    res = await db.users.delete_one({"id": uid, "role": {"$ne": "admin"}})
+    if res.deleted_count == 0:
+        raise HTTPException(404, "User not found or cannot delete admin")
+    return {"ok": True}
+
+
+@api_router.post("/admin/wallet/topup", response_model=UserPublic)
+async def admin_topup(payload: WalletTopUpPayload, _admin=Depends(require_admin)) -> Dict[str, Any]:
+    if payload.amount == 0:
+        raise HTTPException(400, "Amount cannot be zero")
+    updated = await _credit_user(payload.user_id, payload.amount, payload.note or "")
+    return UserPublic(**updated).model_dump()
+
+
+@api_router.get("/admin/users/{uid}/wallet")
+async def admin_user_wallet(uid: str, _admin=Depends(require_admin)) -> Dict[str, Any]:
+    user = await db.users.find_one({"id": uid}, {"_id": 0, "password_hash": 0})
+    if not user:
+        raise HTTPException(404, "User not found")
+    txns = await db.wallet_txns.find({"user_id": uid}, {"_id": 0}).sort("created_at", -1).to_list(200)
+    return {"user": user, "transactions": txns}
+
+
+# ---------------------- BRANDING ----------------------
+@api_router.get("/branding")
+async def branding() -> Dict[str, str]:
+    return {
+        "creator": os.environ.get("ADMIN_NAME", "Admin"),
+        "company": os.environ.get("COMPANY_NAME", "Company"),
+    }
 
 
 # ---------------------- ROUTES: PUBLISH ----------------------
@@ -693,11 +873,16 @@ async def publish_ad(ad_id: str, payload: PublishRequest) -> Dict[str, Any]:
 
 # ---------------------- ROUTES: A/B VARIANTS ----------------------
 @api_router.post("/ads/{ad_id}/variants", response_model=Ad)
-async def create_variant(ad_id: str) -> Ad:
+async def create_variant(ad_id: str, user=Depends(get_current_user)) -> Ad:
     """Regenerate a fresh image + caption variant from the same brief."""
-    parent = await db.ads.find_one({"id": ad_id}, {"_id": 0})
+    q: Dict[str, Any] = {"id": ad_id}
+    if user["role"] != "admin":
+        q["owner_id"] = user["id"]
+    parent = await db.ads.find_one(q, {"_id": 0})
     if not parent:
         raise HTTPException(404, "Ad not found")
+
+    await _charge_user(user["id"], PRICING["variant"], "ad variant")
 
     site = await _resolve_website(parent.get("website_id"))
     payload = GenerateRequest(
@@ -718,6 +903,7 @@ async def create_variant(ad_id: str) -> Ad:
         caption_text = f"{caption_text}\n\n{cta}"
     variant = Ad(
         id=new_id,
+        owner_id=user["id"],
         website_id=parent.get("website_id"),
         website_name=parent.get("website_name"),
         topic=parent["topic"],
@@ -743,8 +929,17 @@ SCHEDULER_TICK_SEC = 60
 
 
 async def _auto_generate_for_website(site: Dict[str, Any]) -> None:
-    """Scrape the website + create one approved-ready ad."""
+    """Scrape the website + create one approved-ready ad. Skips if owner is out of credits."""
+    owner_id = site.get("owner_id", "")
+    if not owner_id:
+        return
+    # check & charge owner credits before LLM calls
+    owner = await db.users.find_one({"id": owner_id}, {"_id": 0, "wallet_balance": 1})
+    if not owner or (owner.get("wallet_balance", 0) or 0) < PRICING["auto_gen"]:
+        logger.info(f"Skip auto-gen for {site.get('name')} — insufficient credits")
+        return
     try:
+        await _charge_user(owner_id, PRICING["auto_gen"], f"auto-gen [{site.get('name')}]")
         scraped = await _scrape_url(site["url"])
         topic_seed = scraped.get("title") or scraped.get("description") or site["name"]
         body_hint = scraped.get("body", "")
@@ -764,6 +959,7 @@ async def _auto_generate_for_website(site: Dict[str, Any]) -> None:
             caption_text = f"{caption_text}\n\n{cta}"
         ad = Ad(
             id=new_id,
+            owner_id=owner_id,
             website_id=site["id"],
             website_name=site["name"],
             topic=topic,
@@ -801,9 +997,12 @@ async def _scheduler_loop() -> None:
 
 
 @api_router.get("/scheduler/status")
-async def scheduler_status() -> Dict[str, Any]:
+async def scheduler_status(user=Depends(get_current_user)) -> Dict[str, Any]:
     now = datetime.now(timezone.utc)
-    opted = await db.websites.count_documents({"auto_generate": True})
+    q: Dict[str, Any] = {"auto_generate": True}
+    if user["role"] != "admin":
+        q["owner_id"] = user["id"]
+    opted = await db.websites.count_documents(q)
     return {
         "peak_hours_utc": sorted(PEAK_HOURS),
         "current_hour_utc": now.hour,
@@ -814,6 +1013,11 @@ async def scheduler_status() -> Dict[str, Any]:
 
 @app.on_event("startup")
 async def _start_scheduler() -> None:
+    await db.users.create_index("email", unique=True)
+    await db.websites.create_index("owner_id")
+    await db.ads.create_index("owner_id")
+    await db.leads.create_index("owner_id")
+    await seed_admin(db)
     asyncio.create_task(_scheduler_loop())
 
 
@@ -848,6 +1052,7 @@ async def create_public_lead(wid: str, payload: LeadCreate) -> Lead:
     if not site:
         raise HTTPException(404, "Website not found")
     lead = Lead(
+        owner_id=site.get("owner_id", ""),
         website_id=wid,
         website_name=site.get("name", ""),
         name=payload.name.strip(),
@@ -878,33 +1083,41 @@ async def create_public_lead(wid: str, payload: LeadCreate) -> Lead:
         f"{'📍 ' + lead.city + chr(10) if lead.city else ''}"
         f"{'💬 ' + lead.message + chr(10) if lead.message else ''}"
     )
-    asyncio.create_task(asyncio.to_thread(_send_telegram_notification, alert))
+    asyncio.create_task(asyncio.to_thread(
+        _send_telegram_notification,
+        (site.get("telegram_bot_token") or "").strip(),
+        (site.get("telegram_chat_id") or "").strip(),
+        alert,
+    ))
     return lead
 
 
 @api_router.get("/leads", response_model=List[Lead])
-async def list_leads(website_id: Optional[str] = None) -> List[Dict[str, Any]]:
-    q: Dict[str, Any] = {}
+async def list_leads(website_id: Optional[str] = None, user=Depends(get_current_user)) -> List[Dict[str, Any]]:
+    q: Dict[str, Any] = {} if user["role"] == "admin" else {"owner_id": user["id"]}
     if website_id:
         q["website_id"] = website_id
     return await db.leads.find(q, {"_id": 0}).sort("created_at", -1).to_list(2000)
 
 
 @api_router.delete("/leads/{lid}")
-async def delete_lead(lid: str) -> Dict[str, bool]:
-    res = await db.leads.delete_one({"id": lid})
+async def delete_lead(lid: str, user=Depends(get_current_user)) -> Dict[str, bool]:
+    q: Dict[str, Any] = {"id": lid}
+    if user["role"] != "admin":
+        q["owner_id"] = user["id"]
+    res = await db.leads.delete_one(q)
     if res.deleted_count == 0:
         raise HTTPException(404, "Lead not found")
     return {"ok": True}
 
 
 @api_router.get("/leads/export.csv")
-async def export_leads_csv(website_id: Optional[str] = None):
+async def export_leads_csv(website_id: Optional[str] = None, user=Depends(get_current_user)):
     import csv
     from io import StringIO
     from fastapi.responses import Response
 
-    q: Dict[str, Any] = {}
+    q: Dict[str, Any] = {} if user["role"] == "admin" else {"owner_id": user["id"]}
     if website_id:
         q["website_id"] = website_id
     docs = await db.leads.find(q, {"_id": 0}).sort("created_at", -1).to_list(5000)

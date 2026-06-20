@@ -4,7 +4,13 @@ import { useWebsiteCrud } from "@/hooks/useWebsiteCrud";
 import { Plus, Trash2, Pencil, Globe, X, Check, Zap, Link as LinkIcon, Copy } from "lucide-react";
 import { toast } from "sonner";
 
-const emptyForm = { name: "", url: "", description: "", cta_url: "", lead_form_url: "", lead_webhook_url: "", whatsapp_number: "", auto_generate: false };
+const emptyForm = {
+    name: "", url: "", description: "",
+    cta_url: "", lead_form_url: "", lead_webhook_url: "", whatsapp_number: "",
+    fb_access_token: "", fb_page_id: "", ig_account_id: "",
+    telegram_bot_token: "", telegram_chat_id: "",
+    auto_generate: false,
+};
 
 const CARD_COLORS = ["bg-white", "bg-[#FFDBCB]", "bg-[#BAE6FD]", "bg-[#A7F3D0]", "bg-[#DDD6FE]"];
 
@@ -94,6 +100,74 @@ const WebsiteForm = ({ editingId, form, setForm, submitting, onSubmit, onClose }
                             value={form.whatsapp_number}
                             onChange={(e) => setForm({ ...form, whatsapp_number: e.target.value })}
                             data-testid="form-whatsapp-input"
+                        />
+                    </div>
+                </div>
+            </div>
+            <div className="md:col-span-2 border-2 border-black p-4 bg-[#DDD6FE]">
+                <p className="label-uppercase">📘 Meta (Facebook + Instagram) — per-website</p>
+                <p className="text-xs mt-1 font-medium">
+                    Har website apni alag FB/IG credentials rakhti hai. Empty छोड़ें अगर अभी publish नहीं करना।
+                </p>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-3">
+                    <div className="md:col-span-2">
+                        <label className="text-xs font-bold uppercase tracking-wider">FB Access Token (System User, never-expires)</label>
+                        <input
+                            type="password"
+                            className="nb-input mt-1 font-mono text-xs"
+                            placeholder="EAAxxx..."
+                            value={form.fb_access_token}
+                            onChange={(e) => setForm({ ...form, fb_access_token: e.target.value })}
+                            data-testid="form-fb-token"
+                        />
+                    </div>
+                    <div>
+                        <label className="text-xs font-bold uppercase tracking-wider">FB Page ID</label>
+                        <input
+                            className="nb-input mt-1 font-mono"
+                            placeholder="123456789012345"
+                            value={form.fb_page_id}
+                            onChange={(e) => setForm({ ...form, fb_page_id: e.target.value })}
+                            data-testid="form-fb-page"
+                        />
+                    </div>
+                    <div>
+                        <label className="text-xs font-bold uppercase tracking-wider">Instagram Business ID</label>
+                        <input
+                            className="nb-input mt-1 font-mono"
+                            placeholder="17841412345678"
+                            value={form.ig_account_id}
+                            onChange={(e) => setForm({ ...form, ig_account_id: e.target.value })}
+                            data-testid="form-ig-id"
+                        />
+                    </div>
+                </div>
+            </div>
+            <div className="md:col-span-2 border-2 border-black p-4 bg-[#BAE6FD]">
+                <p className="label-uppercase">🔔 Telegram Lead Alerts (per-website)</p>
+                <p className="text-xs mt-1 font-medium">
+                    Bot Token + Chat ID save करो — leads आते ही instant Telegram ping इस website के लिए।
+                </p>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-3">
+                    <div>
+                        <label className="text-xs font-bold uppercase tracking-wider">Bot Token</label>
+                        <input
+                            type="password"
+                            className="nb-input mt-1 font-mono text-xs"
+                            placeholder="1234567890:ABCdef..."
+                            value={form.telegram_bot_token}
+                            onChange={(e) => setForm({ ...form, telegram_bot_token: e.target.value })}
+                            data-testid="form-tg-token"
+                        />
+                    </div>
+                    <div>
+                        <label className="text-xs font-bold uppercase tracking-wider">Chat ID</label>
+                        <input
+                            className="nb-input mt-1 font-mono"
+                            placeholder="123456789"
+                            value={form.telegram_chat_id}
+                            onChange={(e) => setForm({ ...form, telegram_chat_id: e.target.value })}
+                            data-testid="form-tg-chat"
                         />
                     </div>
                 </div>
@@ -279,6 +353,11 @@ const Websites = () => {
             lead_form_url: w.lead_form_url || "",
             lead_webhook_url: w.lead_webhook_url || "",
             whatsapp_number: w.whatsapp_number || "",
+            fb_access_token: w.fb_access_token || "",
+            fb_page_id: w.fb_page_id || "",
+            ig_account_id: w.ig_account_id || "",
+            telegram_bot_token: w.telegram_bot_token || "",
+            telegram_chat_id: w.telegram_chat_id || "",
             auto_generate: !!w.auto_generate,
         });
         setShowForm(true);
