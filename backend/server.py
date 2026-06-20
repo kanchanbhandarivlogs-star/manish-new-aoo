@@ -59,6 +59,9 @@ class Website(BaseModel):
     name: str
     url: str
     description: Optional[str] = ""
+    cta_url: Optional[str] = ""
+    lead_form_url: Optional[str] = ""
+    lead_webhook_url: Optional[str] = ""
     auto_generate: bool = False
     last_auto_run_at: Optional[str] = None
     created_at: str = Field(default_factory=now_iso)
@@ -68,6 +71,9 @@ class WebsiteCreate(BaseModel):
     name: str
     url: str
     description: Optional[str] = ""
+    cta_url: Optional[str] = ""
+    lead_form_url: Optional[str] = ""
+    lead_webhook_url: Optional[str] = ""
     auto_generate: bool = False
 
 
@@ -75,6 +81,9 @@ class WebsiteUpdate(BaseModel):
     name: Optional[str] = None
     url: Optional[str] = None
     description: Optional[str] = None
+    cta_url: Optional[str] = None
+    lead_form_url: Optional[str] = None
+    lead_webhook_url: Optional[str] = None
     auto_generate: Optional[bool] = None
 
 
@@ -130,6 +139,32 @@ class MetaSettings(BaseModel):
     fb_page_id: Optional[str] = ""
     ig_account_id: Optional[str] = ""
     updated_at: str = Field(default_factory=now_iso)
+
+
+class Lead(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    website_id: str
+    website_name: Optional[str] = ""
+    name: str
+    phone: str
+    email: Optional[str] = ""
+    course: Optional[str] = ""
+    city: Optional[str] = ""
+    message: Optional[str] = ""
+    source_ad_id: Optional[str] = None
+    forwarded: bool = False
+    created_at: str = Field(default_factory=now_iso)
+
+
+class LeadCreate(BaseModel):
+    name: str
+    phone: str
+    email: Optional[str] = ""
+    course: Optional[str] = ""
+    city: Optional[str] = ""
+    message: Optional[str] = ""
+    source_ad_id: Optional[str] = None
 
 
 # ---------------------- LLM HELPERS ----------------------
@@ -266,13 +301,43 @@ def _parse_creative_json(raw: str) -> Dict[str, Any]:
         return json.loads(match.group(0))
 
 
-async def _resolve_website_name(website_id: Optional[str]) -> Optional[str]:
+async def _resolve_website(website_id: Optional[str]) -> Optional[Dict[str, Any]]:
     if not website_id:
         return None
     site = await db.websites.find_one({"id": website_id}, {"_id": 0})
     if not site:
         raise HTTPException(404, "Website not found")
-    return site["name"]
+    return site
+
+
+async def _resolve_website_name(website_id: Optional[str]) -> Optional[str]:
+    site = await _resolve_website(website_id)
+    return site["name"] if site else None
+
+
+def _public_frontend_url() -> str:
+    """Best-effort base URL to host the lead-form page (frontend)."""
+    base = os.environ.get("PUBLIC_BACKEND_URL") or os.environ.get("REACT_APP_BACKEND_URL", "")
+    return base.rstrip("/")
+
+
+def _build_cta_lines(site: Optional[Dict[str, Any]]) -> str:
+    """Build the CTA block appended to ad captions."""
+    if not site:
+        return ""
+    lines: List[str] = []
+    cta = (site.get("cta_url") or site.get("url") or "").strip()
+    if cta:
+        lines.append(f"🌐 Visit: {cta}")
+    lead_url = (site.get("lead_form_url") or "").strip()
+    if not lead_url:
+        # use built-in form
+        base = _public_frontend_url()
+        if base:
+            lead_url = f"{base}/apply/{site['id']}"
+    if lead_url:
+        lines.append(f"📝 Apply Now: {lead_url}")
+    return "\n".join(lines)
 
 
 # ---------------------- ROUTES: HEALTH ----------------------
@@ -330,18 +395,23 @@ async def generate_ad(
     payload: GenerateRequest, background_tasks: BackgroundTasks
 ) -> Ad:
     """Generate caption + image inline; video is queued in background."""
-    website_name = await _resolve_website_name(payload.website_id)
+    site = await _resolve_website(payload.website_id)
+    website_name = site["name"] if site else None
 
     raw = await _llm_text(_CREATIVE_SYSTEM, _build_creative_prompt(payload, website_name))
     parsed = _parse_creative_json(raw)
 
     ad_id = str(uuid.uuid4())
+    caption_text = parsed.get("caption", "")
+    cta = _build_cta_lines(site)
+    if cta:
+        caption_text = f"{caption_text}\n\n{cta}"
     ad = Ad(
         id=ad_id,
         website_id=payload.website_id,
         website_name=website_name,
         topic=payload.topic,
-        caption=parsed.get("caption", ""),
+        caption=caption_text,
         hashtags=parsed.get("hashtags", []),
         image_prompt=parsed.get("image_prompt", ""),
         video_prompt=parsed.get("video_prompt", ""),
@@ -592,6 +662,7 @@ async def create_variant(ad_id: str) -> Ad:
     if not parent:
         raise HTTPException(404, "Ad not found")
 
+    site = await _resolve_website(parent.get("website_id"))
     payload = GenerateRequest(
         website_id=parent.get("website_id"),
         topic=parent["topic"],
@@ -604,12 +675,16 @@ async def create_variant(ad_id: str) -> Ad:
     )
     parsed = _parse_creative_json(raw)
     new_id = str(uuid.uuid4())
+    caption_text = parsed.get("caption", "")
+    cta = _build_cta_lines(site)
+    if cta:
+        caption_text = f"{caption_text}\n\n{cta}"
     variant = Ad(
         id=new_id,
         website_id=parent.get("website_id"),
         website_name=parent.get("website_name"),
         topic=parent["topic"],
-        caption=parsed.get("caption", ""),
+        caption=caption_text,
         hashtags=parsed.get("hashtags", []),
         image_prompt=parsed.get("image_prompt", ""),
         video_prompt=parsed.get("video_prompt", ""),
@@ -646,12 +721,16 @@ async def _auto_generate_for_website(site: Dict[str, Any]) -> None:
         raw = await _llm_text(_CREATIVE_SYSTEM, _build_creative_prompt(payload, site["name"]))
         parsed = _parse_creative_json(raw)
         new_id = str(uuid.uuid4())
+        caption_text = parsed.get("caption", "")
+        cta = _build_cta_lines(site)
+        if cta:
+            caption_text = f"{caption_text}\n\n{cta}"
         ad = Ad(
             id=new_id,
             website_id=site["id"],
             website_name=site["name"],
             topic=topic,
-            caption=parsed.get("caption", ""),
+            caption=caption_text,
             hashtags=parsed.get("hashtags", []),
             image_prompt=parsed.get("image_prompt", ""),
             video_prompt=parsed.get("video_prompt", ""),
@@ -699,6 +778,109 @@ async def scheduler_status() -> Dict[str, Any]:
 @app.on_event("startup")
 async def _start_scheduler() -> None:
     asyncio.create_task(_scheduler_loop())
+
+
+# ---------------------- ROUTES: LEADS ----------------------
+def _forward_lead_to_webhook(webhook_url: str, lead: Dict[str, Any]) -> bool:
+    try:
+        resp = requests.post(webhook_url, json=lead, timeout=10)
+        return 200 <= resp.status_code < 300
+    except Exception:  # noqa: BLE001
+        logger.exception("Lead webhook delivery failed")
+        return False
+
+
+@api_router.get("/public/websites/{wid}")
+async def public_website(wid: str) -> Dict[str, Any]:
+    """Public, no-auth endpoint used by the apply form page."""
+    site = await db.websites.find_one({"id": wid}, {"_id": 0})
+    if not site:
+        raise HTTPException(404, "Website not found")
+    return {
+        "id": site["id"],
+        "name": site["name"],
+        "description": site.get("description", ""),
+        "cta_url": site.get("cta_url", "") or site.get("url", ""),
+    }
+
+
+@api_router.post("/public/leads/{wid}", response_model=Lead)
+async def create_public_lead(wid: str, payload: LeadCreate) -> Lead:
+    """Public, no-auth endpoint where the lead form posts."""
+    site = await db.websites.find_one({"id": wid}, {"_id": 0})
+    if not site:
+        raise HTTPException(404, "Website not found")
+    lead = Lead(
+        website_id=wid,
+        website_name=site.get("name", ""),
+        name=payload.name.strip(),
+        phone=payload.phone.strip(),
+        email=(payload.email or "").strip(),
+        course=(payload.course or "").strip(),
+        city=(payload.city or "").strip(),
+        message=(payload.message or "").strip(),
+        source_ad_id=payload.source_ad_id,
+    )
+    if not lead.name or not lead.phone:
+        raise HTTPException(400, "Name and phone are required")
+
+    webhook_url = (site.get("lead_webhook_url") or "").strip()
+    if webhook_url:
+        ok = _forward_lead_to_webhook(webhook_url, lead.model_dump())
+        lead.forwarded = ok
+
+    await db.leads.insert_one(lead.model_dump())
+    return lead
+
+
+@api_router.get("/leads", response_model=List[Lead])
+async def list_leads(website_id: Optional[str] = None) -> List[Dict[str, Any]]:
+    q: Dict[str, Any] = {}
+    if website_id:
+        q["website_id"] = website_id
+    return await db.leads.find(q, {"_id": 0}).sort("created_at", -1).to_list(2000)
+
+
+@api_router.delete("/leads/{lid}")
+async def delete_lead(lid: str) -> Dict[str, bool]:
+    res = await db.leads.delete_one({"id": lid})
+    if res.deleted_count == 0:
+        raise HTTPException(404, "Lead not found")
+    return {"ok": True}
+
+
+@api_router.get("/leads/export.csv")
+async def export_leads_csv(website_id: Optional[str] = None):
+    import csv
+    from io import StringIO
+    from fastapi.responses import Response
+
+    q: Dict[str, Any] = {}
+    if website_id:
+        q["website_id"] = website_id
+    docs = await db.leads.find(q, {"_id": 0}).sort("created_at", -1).to_list(5000)
+    buf = StringIO()
+    writer = csv.writer(buf)
+    writer.writerow(
+        ["created_at", "website_name", "name", "phone", "email", "course", "city", "message", "forwarded"]
+    )
+    for d in docs:
+        writer.writerow([
+            d.get("created_at", ""),
+            d.get("website_name", ""),
+            d.get("name", ""),
+            d.get("phone", ""),
+            d.get("email", ""),
+            d.get("course", ""),
+            d.get("city", ""),
+            d.get("message", ""),
+            "yes" if d.get("forwarded") else "no",
+        ])
+    return Response(
+        content=buf.getvalue(),
+        media_type="text/csv",
+        headers={"Content-Disposition": 'attachment; filename="leads.csv"'},
+    )
 
 
 # ---------------------- APP WIRING ----------------------

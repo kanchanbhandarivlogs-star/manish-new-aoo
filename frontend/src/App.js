@@ -7,6 +7,8 @@ import Websites from "@/pages/Websites";
 import Generate from "@/pages/Generate";
 import Gallery from "@/pages/Gallery";
 import Settings from "@/pages/Settings";
+import Leads from "@/pages/Leads";
+import Apply from "@/pages/Apply";
 
 const TOAST_OPTIONS = {
     style: {
@@ -26,11 +28,13 @@ function App() {
             <BrowserRouter>
                 <Toaster position="top-right" toastOptions={TOAST_OPTIONS} />
                 <Routes>
+                    <Route path="/apply/:websiteId" element={<Apply />} />
                     <Route element={<Layout />}>
                         <Route index element={<Dashboard />} />
                         <Route path="/websites" element={<Websites />} />
                         <Route path="/generate" element={<Generate />} />
                         <Route path="/gallery" element={<Gallery />} />
+                        <Route path="/leads" element={<Leads />} />
                         <Route path="/settings" element={<Settings />} />
                         <Route path="*" element={<Navigate to="/" replace />} />
                     </Route>

@@ -1,5 +1,5 @@
 import { NavLink, Outlet, useLocation } from "react-router-dom";
-import { LayoutDashboard, Globe, Sparkles, ImagePlay, Settings as SettingsIcon, Menu, X } from "lucide-react";
+import { LayoutDashboard, Globe, Sparkles, ImagePlay, Settings as SettingsIcon, Users, Menu, X } from "lucide-react";
 import { useState } from "react";
 
 const NAV = [
@@ -7,6 +7,7 @@ const NAV = [
     { to: "/websites", label: "Websites", icon: Globe, testid: "nav-websites" },
     { to: "/generate", label: "Generate Ad", icon: Sparkles, testid: "nav-generate" },
     { to: "/gallery", label: "Ad Gallery", icon: ImagePlay, testid: "nav-gallery" },
+    { to: "/leads", label: "Leads", icon: Users, testid: "nav-leads" },
     { to: "/settings", label: "Settings", icon: SettingsIcon, testid: "nav-settings" },
 ];
 

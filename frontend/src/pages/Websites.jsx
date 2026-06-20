@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useState } from "react";
 import { apiClient } from "@/lib/api";
 import { useWebsiteCrud } from "@/hooks/useWebsiteCrud";
-import { Plus, Trash2, Pencil, Globe, X, Check, Zap } from "lucide-react";
+import { Plus, Trash2, Pencil, Globe, X, Check, Zap, Link as LinkIcon, Copy } from "lucide-react";
 import { toast } from "sonner";
 
-const emptyForm = { name: "", url: "", description: "", auto_generate: false };
+const emptyForm = { name: "", url: "", description: "", cta_url: "", lead_form_url: "", lead_webhook_url: "", auto_generate: false };
 
 const CARD_COLORS = ["bg-white", "bg-[#FFDBCB]", "bg-[#BAE6FD]", "bg-[#A7F3D0]", "bg-[#DDD6FE]"];
 
@@ -46,6 +46,47 @@ const WebsiteForm = ({ editingId, form, setForm, submitting, onSubmit, onClose }
                     onChange={(e) => setForm({ ...form, description: e.target.value })}
                     data-testid="form-desc-input"
                 />
+            </div>
+            <div className="md:col-span-2 border-2 border-black p-4 bg-[#BAE6FD]">
+                <p className="label-uppercase">CTA & Lead Links</p>
+                <p className="text-xs mt-1 font-medium">
+                    These auto-append to every ad caption — both your website link AND apply-now link.
+                </p>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-3">
+                    <div>
+                        <label className="text-xs font-bold uppercase tracking-wider">Website CTA URL</label>
+                        <input
+                            className="nb-input mt-1"
+                            placeholder="https://collegeop.com (defaults to URL above)"
+                            value={form.cta_url}
+                            onChange={(e) => setForm({ ...form, cta_url: e.target.value })}
+                            data-testid="form-cta-input"
+                        />
+                    </div>
+                    <div>
+                        <label className="text-xs font-bold uppercase tracking-wider">External Apply-Now URL (optional)</label>
+                        <input
+                            className="nb-input mt-1"
+                            placeholder="https://forms.gle/... (blank = use built-in form)"
+                            value={form.lead_form_url}
+                            onChange={(e) => setForm({ ...form, lead_form_url: e.target.value })}
+                            data-testid="form-lead-url-input"
+                        />
+                    </div>
+                    <div className="md:col-span-2">
+                        <label className="text-xs font-bold uppercase tracking-wider">Lead Webhook (optional — your website endpoint)</label>
+                        <input
+                            className="nb-input mt-1 font-mono text-xs"
+                            placeholder="https://collegeop.com/api/lead — receives JSON {name, phone, email, course, city, message}"
+                            value={form.lead_webhook_url}
+                            onChange={(e) => setForm({ ...form, lead_webhook_url: e.target.value })}
+                            data-testid="form-webhook-input"
+                        />
+                        <p className="text-xs mt-1 italic">
+                            हर lead automatically आपकी website और इस app — दोनों जगह आएगा।
+                        </p>
+                    </div>
+                </div>
             </div>
             <label className="md:col-span-2 flex items-center gap-3 p-3 border-2 border-black bg-[#FFD84D] cursor-pointer" data-testid="form-auto-generate">
                 <input
@@ -115,6 +156,25 @@ const WebsiteCard = ({ website, color, onEdit, onDelete }) => (
                 <Zap size={10} strokeWidth={3} /> Auto-gen ON
             </span>
         )}
+        <div className="mt-3 p-2 border-2 border-black bg-white/80" data-testid={`apply-link-${website.id}`}>
+            <p className="text-[0.65rem] font-bold uppercase tracking-wider flex items-center gap-1">
+                <LinkIcon size={10} strokeWidth={3} /> Apply Now Link
+            </p>
+            <div className="flex items-center gap-2 mt-1">
+                <code className="text-xs font-mono break-all flex-1">{`${window.location.origin}/apply/${website.id}`}</code>
+                <button
+                    className="nb-btn !p-1 !shadow-[1px_1px_0_0_#000]"
+                    onClick={() => {
+                        navigator.clipboard.writeText(`${window.location.origin}/apply/${website.id}`);
+                        toast.success("Link copied");
+                    }}
+                    data-testid={`copy-apply-link-${website.id}`}
+                    title="Copy link"
+                >
+                    <Copy size={12} />
+                </button>
+            </div>
+        </div>
     </div>
 );
 
@@ -205,6 +265,9 @@ const Websites = () => {
             name: w.name,
             url: w.url,
             description: w.description || "",
+            cta_url: w.cta_url || "",
+            lead_form_url: w.lead_form_url || "",
+            lead_webhook_url: w.lead_webhook_url || "",
             auto_generate: !!w.auto_generate,
         });
         setShowForm(true);
