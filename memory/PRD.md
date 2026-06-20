@@ -27,7 +27,15 @@ User runs collegeop.com and wants a free AI tool that generates social media ads
 - ✅ Dashboard stats + peak student-traffic hour suggestions
 - ✅ Neo-brutalist pastel UI with Outfit/Figtree fonts and marquee ticker
 
-## Implemented (Feb 20, 2026 — iter-4)
+## Implemented (Feb 20, 2026 — iter-5: code-quality)
+- ✅ **Token storage hardened**: JWT moved from `localStorage` → `sessionStorage` + in-memory mirror (`/app/frontend/src/lib/tokenStore.js`). Token now wipes on tab close, drastically shrinking XSS exfiltration window.
+- ✅ **Admin wallet = unlimited**: `_charge_user` and auto-gen scheduler skip deduction for `role == "admin"`. `GET /api/wallet` returns `unlimited: true` for admins; frontend badge shows "∞ UNLIMITED".
+- ✅ **Watermark logic extracted** into `/app/backend/services/watermark.py` — small focused helpers (`fetch_website_logo_bytes`, `apply_logo_watermark`). `server.py` shrunk from 1342 → 1230 lines.
+- ✅ **LLM error UX**: text + image generation wrap upstream `LlmChat` calls; budget/rate-limit errors now return HTTP 503 with friendly messages instead of generic 500.
+- ✅ **Code-quality fixes**: hardcoded test creds → env vars; magic numbers (180000, 60000) → named constants; `console.warn` wrapped in dev-only conditional; ambiguous `l` variable renamed in test file.
+- ✅ **Iter-5 backend tests**: 15/15 pytest cases passed (`/app/test_reports/iteration_5.json`).
+
+## Implemented (Feb 20, 2026 — iter-4: watermark + security)
 - ✅ **Automatic logo watermarking** on every generated/variant/auto-gen ad image. Picks the website's `<link rel=icon>` / `apple-touch-icon` / `og:image` → `/favicon.ico` → Google Favicon API. If no logo found, falls back to a text-only brand-name badge. Composited bottom-right with a semi-translucent white badge for legibility on any background. (`_fetch_website_logo_bytes` + `_apply_logo_watermark` in server.py)
 - ✅ **Auth + tenant isolation** on `/ads/{id}/download/image`, `/ads/{id}/download/video`, `/ads/{id}/publish` — all now require `Depends(get_current_user)` and filter by `owner_id` for non-admins.
 - ✅ **`owner_id` field added to `Ad` pydantic model** (previously dropped by `extra="ignore"`).

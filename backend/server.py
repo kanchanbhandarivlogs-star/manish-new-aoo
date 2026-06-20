@@ -283,7 +283,16 @@ async def _llm_text(system: str, user_text: str) -> str:
         session_id=str(uuid.uuid4()),
         system_message=system,
     ).with_model("openai", "gpt-5.2")
-    return await chat.send_message(UserMessage(text=user_text))
+    try:
+        return await chat.send_message(UserMessage(text=user_text))
+    except Exception as e:  # noqa: BLE001
+        msg = str(e)
+        if "Budget has been exceeded" in msg or "budget" in msg.lower():
+            raise HTTPException(503, "AI provider budget exceeded — please try again in a moment.")
+        if "rate limit" in msg.lower() or "429" in msg:
+            raise HTTPException(503, "AI provider rate-limited — please retry shortly.")
+        logger.exception("LLM call failed")
+        raise HTTPException(503, f"AI provider unavailable: {msg[:160]}")
 
 
 def _fetch_website_logo_bytes(website_url: str) -> Optional[bytes]:
@@ -317,7 +326,7 @@ async def _generate_image_to_file(
     ).with_model("gemini", "gemini-3.1-flash-image-preview").with_params(
         modalities=["image", "text"]
     )
-    _, images = await chat.send_message_multimodal_response(UserMessage(text=prompt))
+    _, images = await _safe_image_call(chat, prompt)
     if not images:
         raise RuntimeError("No image returned")
     image_bytes = base64.b64decode(images[0]["data"])
@@ -326,6 +335,22 @@ async def _generate_image_to_file(
     # Overlay the website's logo + brand name as a watermark (bottom-right)
     _apply_logo_watermark(out_path, website_url, brand_text)
     return f"images/{ad_id}.png"
+
+
+async def _safe_image_call(chat, prompt: str):
+    """Wrap multimodal call to convert upstream LLM budget/rate errors into 503."""
+    from emergentintegrations.llm.chat import UserMessage
+
+    try:
+        return await chat.send_message_multimodal_response(UserMessage(text=prompt))
+    except Exception as e:  # noqa: BLE001
+        msg = str(e)
+        if "Budget has been exceeded" in msg or "budget" in msg.lower():
+            raise HTTPException(503, "AI image provider budget exceeded — try again shortly.")
+        if "rate limit" in msg.lower() or "429" in msg:
+            raise HTTPException(503, "AI image provider rate-limited — try again shortly.")
+        logger.exception("Image LLM call failed")
+        raise HTTPException(503, f"AI image provider unavailable: {msg[:160]}")
 
 
 def _generate_video_to_file(
