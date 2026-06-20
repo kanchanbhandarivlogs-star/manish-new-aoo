@@ -16,8 +16,9 @@ BASE_URL = os.environ["REACT_APP_BACKEND_URL"].rstrip("/")
 API = f"{BASE_URL}/api"
 MEDIA_DIR = Path("/app/backend/generated_media")
 
-ADMIN_EMAIL = "manish99346626@gmail.com"
-ADMIN_PASSWORD = "Manish@1234"
+# Credentials are loaded from /app/memory/test_credentials.md via the test runner's env
+ADMIN_EMAIL = os.environ.get("ADMIN_TEST_EMAIL", "manish99346626@gmail.com")
+ADMIN_PASSWORD = os.environ.get("ADMIN_TEST_PASSWORD", "Manish@1234")
 
 
 # ---------- helpers ----------

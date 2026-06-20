@@ -8,8 +8,8 @@ import requests
 BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "https://smart-content-pub.preview.emergentagent.com").rstrip("/")
 API = f"{BASE_URL}/api"
 
-ADMIN_EMAIL = "manish99346626@gmail.com"
-ADMIN_PASSWORD = "Manish@1234"
+ADMIN_EMAIL = os.environ.get("ADMIN_TEST_EMAIL", "manish99346626@gmail.com")
+ADMIN_PASSWORD = os.environ.get("ADMIN_TEST_PASSWORD", "Manish@1234")
 
 # Track created users for cleanup
 _created_user_ids: list[str] = []
@@ -290,7 +290,7 @@ class TestPublicEndpoints:
         assert lead["owner_id"] == user_a["id"]
         # User A sees this lead
         my_leads = requests.get(f"{API}/leads", headers=_auth_headers(user_a["token"]), timeout=10).json()
-        assert any(l["id"] == lead["id"] for l in my_leads)
+        assert any(item["id"] == lead["id"] for item in my_leads)
 
 
 class TestSchedulerAndStats:

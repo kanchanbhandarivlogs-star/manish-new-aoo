@@ -1,9 +1,8 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import { apiClient } from "@/lib/api";
+import { clearToken, getToken, setToken } from "@/lib/tokenStore";
 
 const AuthContext = createContext(null);
-
-const TOKEN_KEY = "ads_studio_token";
 
 export const AuthProvider = ({ children }) => {
     const [user, setUser] = useState(null);
@@ -13,7 +12,7 @@ export const AuthProvider = ({ children }) => {
     // attach interceptor once
     useMemo(() => {
         apiClient.interceptors.request.use((config) => {
-            const token = localStorage.getItem(TOKEN_KEY);
+            const token = getToken();
             if (token) config.headers.Authorization = `Bearer ${token}`;
             return config;
         });
@@ -21,7 +20,7 @@ export const AuthProvider = ({ children }) => {
             (r) => r,
             (err) => {
                 if (err.response?.status === 401) {
-                    localStorage.removeItem(TOKEN_KEY);
+                    clearToken();
                     setUser(null);
                 }
                 return Promise.reject(err);
@@ -40,7 +39,7 @@ export const AuthProvider = ({ children }) => {
     }, []);
 
     useEffect(() => {
-        const token = localStorage.getItem(TOKEN_KEY);
+        const token = getToken();
         if (token) {
             refresh().finally(() => setLoading(false));
         } else {
@@ -51,12 +50,12 @@ export const AuthProvider = ({ children }) => {
 
     const login = async (email, password) => {
         const res = await apiClient.post("/auth/login", { email, password });
-        localStorage.setItem(TOKEN_KEY, res.data.token);
+        setToken(res.data.token);
         setUser(res.data.user);
     };
 
     const logout = () => {
-        localStorage.removeItem(TOKEN_KEY);
+        clearToken();
         setUser(null);
     };
 

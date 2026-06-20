@@ -287,150 +287,17 @@ async def _llm_text(system: str, user_text: str) -> str:
 
 
 def _fetch_website_logo_bytes(website_url: str) -> Optional[bytes]:
-    """Best-effort logo fetch. Tries <link rel=icon> / og:image / /favicon.ico, then Google Favicon API."""
-    from urllib.parse import urljoin, urlparse
-
-    headers = {"User-Agent": "Mozilla/5.0 (compatible; AI-Ads-Studio/1.0)"}
-
-    def _looks_like_image(resp: requests.Response) -> bool:
-        ct = (resp.headers.get("content-type") or "").lower()
-        return resp.ok and bool(resp.content) and len(resp.content) > 200 and "image" in ct
-
-    # 1) Parse HTML for <link rel="icon|shortcut icon|apple-touch-icon"> & og:image
-    try:
-        resp = requests.get(website_url, headers=headers, timeout=6)
-        if resp.ok:
-            soup = BeautifulSoup(resp.text, "lxml")
-            candidates: List[str] = []
-            for tag in soup.find_all("link"):
-                rel = tag.get("rel") or []
-                if isinstance(rel, str):
-                    rel = [rel]
-                rel_str = " ".join(rel).lower()
-                if any(k in rel_str for k in ("apple-touch-icon", "icon")):
-                    href = tag.get("href")
-                    if href:
-                        candidates.append(urljoin(website_url, href))
-            og = soup.find("meta", attrs={"property": "og:image"})
-            if og and og.get("content"):
-                candidates.append(urljoin(website_url, og["content"]))
-            for c in candidates:
-                try:
-                    r = requests.get(c, headers=headers, timeout=6)
-                    if _looks_like_image(r):
-                        return r.content
-                except requests.RequestException:
-                    continue
-    except requests.RequestException:
-        pass
-
-    # 2) Try /favicon.ico at root
-    try:
-        parsed = urlparse(website_url)
-        root = f"{parsed.scheme}://{parsed.netloc}"
-        r = requests.get(f"{root}/favicon.ico", headers=headers, timeout=6)
-        if _looks_like_image(r):
-            return r.content
-    except requests.RequestException:
-        pass
-
-    # 3) Google Favicon API fallback
-    try:
-        host = urlparse(website_url).netloc or website_url
-        fav = requests.get(
-            f"https://www.google.com/s2/favicons?domain={host}&sz=128",
-            headers=headers,
-            timeout=6,
-        )
-        if fav.ok and fav.content and len(fav.content) > 300:
-            return fav.content
-    except requests.RequestException:
-        pass
-    return None
+    """Backward-compatible thin wrapper kept for legacy callers/tests."""
+    from services.watermark import fetch_website_logo_bytes
+    return fetch_website_logo_bytes(website_url)
 
 
 def _apply_logo_watermark(
     image_path: Path, website_url: Optional[str], brand_text: Optional[str] = None
 ) -> None:
-    """Composite the website's logo (and optional brand text) onto the bottom-right of the ad."""
-    if not website_url and not brand_text:
-        return
-    try:
-        from io import BytesIO
-
-        from PIL import Image, ImageDraw, ImageFont
-
-        base = Image.open(image_path).convert("RGBA")
-        bw, bh = base.size
-
-        logo_img: Optional["Image.Image"] = None
-        if website_url:
-            logo_bytes = _fetch_website_logo_bytes(website_url)
-            if logo_bytes:
-                try:
-                    logo_img = Image.open(BytesIO(logo_bytes)).convert("RGBA")
-                except Exception:  # noqa: BLE001
-                    logo_img = None
-
-        # Resize logo to ~14% of shorter side
-        if logo_img is not None:
-            target = max(96, int(min(bw, bh) * 0.14))
-            ratio = target / max(logo_img.size)
-            new_size = (max(1, int(logo_img.size[0] * ratio)), max(1, int(logo_img.size[1] * ratio)))
-            logo_img = logo_img.resize(new_size, Image.LANCZOS)
-
-        # Prepare text
-        text = (brand_text or "").strip()
-        font = None
-        text_size = (0, 0)
-        if text:
-            font_size = max(20, int(min(bw, bh) * 0.028))
-            for candidate in (
-                "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
-                "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
-            ):
-                if Path(candidate).exists():
-                    font = ImageFont.truetype(candidate, font_size)
-                    break
-            if font is None:
-                font = ImageFont.load_default()
-            # measure
-            tmp = Image.new("RGBA", (1, 1))
-            d = ImageDraw.Draw(tmp)
-            bbox = d.textbbox((0, 0), text, font=font)
-            text_size = (bbox[2] - bbox[0], bbox[3] - bbox[1])
-
-        # Layout: badge contains logo (left) + text (right), stacked horizontally
-        pad = max(10, int(min(bw, bh) * 0.012))
-        gap = pad
-        logo_w, logo_h = (logo_img.size if logo_img is not None else (0, 0))
-        content_w = logo_w + (gap if (logo_w and text_size[0]) else 0) + text_size[0]
-        content_h = max(logo_h, text_size[1])
-        if content_w == 0 or content_h == 0:
-            return
-        badge_w = content_w + pad * 2
-        badge_h = content_h + pad * 2
-        badge = Image.new("RGBA", (badge_w, badge_h), (255, 255, 255, 235))
-
-        # paste logo
-        cursor_x = pad
-        if logo_img is not None:
-            ly = pad + (content_h - logo_h) // 2
-            badge.alpha_composite(logo_img, dest=(cursor_x, ly))
-            cursor_x += logo_w + gap
-
-        # draw text on badge
-        if text:
-            draw = ImageDraw.Draw(badge)
-            ty = pad + (content_h - text_size[1]) // 2
-            draw.text((cursor_x, ty), text, fill=(20, 20, 20, 255), font=font)
-
-        margin = max(16, int(min(bw, bh) * 0.025))
-        pos = (bw - badge_w - margin, bh - badge_h - margin)
-        base.alpha_composite(badge, dest=pos)
-        base.convert("RGB").save(image_path, format="PNG")
-    except Exception:  # noqa: BLE001
-        logger.exception("Watermark failed for %s", website_url)
+    """Backward-compatible thin wrapper kept for legacy callers/tests."""
+    from services.watermark import apply_logo_watermark
+    apply_logo_watermark(image_path, website_url, brand_text)
 
 
 async def _generate_image_to_file(

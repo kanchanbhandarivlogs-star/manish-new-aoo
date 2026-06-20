@@ -88,9 +88,13 @@ if (isDevServer) {
     webpackConfig = withVisualEdits(webpackConfig);
   } catch (err) {
     if (err.code === 'MODULE_NOT_FOUND' && err.message.includes('@emergentbase/visual-edits/craco')) {
-      console.warn(
-        "[visual-edits] @emergentbase/visual-edits not installed — visual editing disabled."
-      );
+      // Dev-only soft warning — silenced in production builds
+      if (process.env.NODE_ENV !== "production") {
+        // eslint-disable-next-line no-console
+        console.warn(
+          "[visual-edits] @emergentbase/visual-edits not installed — visual editing disabled."
+        );
+      }
     } else {
       throw err;
     }
