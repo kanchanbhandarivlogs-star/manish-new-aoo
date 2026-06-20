@@ -62,6 +62,7 @@ class Website(BaseModel):
     cta_url: Optional[str] = ""
     lead_form_url: Optional[str] = ""
     lead_webhook_url: Optional[str] = ""
+    whatsapp_number: Optional[str] = ""
     auto_generate: bool = False
     last_auto_run_at: Optional[str] = None
     created_at: str = Field(default_factory=now_iso)
@@ -74,6 +75,7 @@ class WebsiteCreate(BaseModel):
     cta_url: Optional[str] = ""
     lead_form_url: Optional[str] = ""
     lead_webhook_url: Optional[str] = ""
+    whatsapp_number: Optional[str] = ""
     auto_generate: bool = False
 
 
@@ -84,6 +86,7 @@ class WebsiteUpdate(BaseModel):
     cta_url: Optional[str] = None
     lead_form_url: Optional[str] = None
     lead_webhook_url: Optional[str] = None
+    whatsapp_number: Optional[str] = None
     auto_generate: Optional[bool] = None
 
 
@@ -138,6 +141,8 @@ class MetaSettings(BaseModel):
     fb_access_token: Optional[str] = ""
     fb_page_id: Optional[str] = ""
     ig_account_id: Optional[str] = ""
+    telegram_bot_token: Optional[str] = ""
+    telegram_chat_id: Optional[str] = ""
     updated_at: str = Field(default_factory=now_iso)
 
 
@@ -331,13 +336,45 @@ def _build_cta_lines(site: Optional[Dict[str, Any]]) -> str:
         lines.append(f"🌐 Visit: {cta}")
     lead_url = (site.get("lead_form_url") or "").strip()
     if not lead_url:
-        # use built-in form
         base = _public_frontend_url()
         if base:
             lead_url = f"{base}/apply/{site['id']}"
     if lead_url:
         lines.append(f"📝 Apply Now: {lead_url}")
+    wa = (site.get("whatsapp_number") or "").strip().replace("+", "").replace(" ", "")
+    if wa:
+        msg = f"Hi%20{site['name'].replace(' ', '%20')}%20team%2C%20I%20saw%20your%20ad"
+        lines.append(f"💬 WhatsApp: https://wa.me/{wa}?text={msg}")
     return "\n".join(lines)
+
+
+def _send_telegram_notification(text: str) -> bool:
+    """Post a Markdown message to Telegram if bot credentials are configured."""
+    try:
+        # synchronous loader works because called from sync context only as fire-and-forget
+        from pymongo import MongoClient
+
+        sync_client = MongoClient(os.environ["MONGO_URL"])
+        doc = sync_client[os.environ["DB_NAME"]].meta_settings.find_one({}, {"_id": 0})
+        sync_client.close()
+    except Exception:  # noqa: BLE001
+        return False
+    if not doc:
+        return False
+    token = (doc.get("telegram_bot_token") or "").strip()
+    chat_id = (doc.get("telegram_chat_id") or "").strip()
+    if not token or not chat_id:
+        return False
+    try:
+        resp = requests.post(
+            f"https://api.telegram.org/bot{token}/sendMessage",
+            data={"chat_id": chat_id, "text": text, "parse_mode": "Markdown"},
+            timeout=10,
+        )
+        return resp.status_code == 200
+    except Exception:  # noqa: BLE001
+        logger.exception("Telegram send failed")
+        return False
 
 
 # ---------------------- ROUTES: HEALTH ----------------------
@@ -830,6 +867,18 @@ async def create_public_lead(wid: str, payload: LeadCreate) -> Lead:
         lead.forwarded = ok
 
     await db.leads.insert_one(lead.model_dump())
+
+    # Fire-and-forget Telegram alert
+    alert = (
+        f"🔥 *NEW LEAD* — {lead.website_name}\n"
+        f"👤 {lead.name}\n"
+        f"📱 `{lead.phone}`\n"
+        f"{'📧 ' + lead.email + chr(10) if lead.email else ''}"
+        f"{'📚 ' + lead.course + chr(10) if lead.course else ''}"
+        f"{'📍 ' + lead.city + chr(10) if lead.city else ''}"
+        f"{'💬 ' + lead.message + chr(10) if lead.message else ''}"
+    )
+    asyncio.create_task(asyncio.to_thread(_send_telegram_notification, alert))
     return lead
 
 

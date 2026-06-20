@@ -4,7 +4,7 @@ import { useWebsiteCrud } from "@/hooks/useWebsiteCrud";
 import { Plus, Trash2, Pencil, Globe, X, Check, Zap, Link as LinkIcon, Copy } from "lucide-react";
 import { toast } from "sonner";
 
-const emptyForm = { name: "", url: "", description: "", cta_url: "", lead_form_url: "", lead_webhook_url: "", auto_generate: false };
+const emptyForm = { name: "", url: "", description: "", cta_url: "", lead_form_url: "", lead_webhook_url: "", whatsapp_number: "", auto_generate: false };
 
 const CARD_COLORS = ["bg-white", "bg-[#FFDBCB]", "bg-[#BAE6FD]", "bg-[#A7F3D0]", "bg-[#DDD6FE]"];
 
@@ -85,6 +85,16 @@ const WebsiteForm = ({ editingId, form, setForm, submitting, onSubmit, onClose }
                         <p className="text-xs mt-1 italic">
                             हर lead automatically आपकी website और इस app — दोनों जगह आएगा।
                         </p>
+                    </div>
+                    <div className="md:col-span-2">
+                        <label className="text-xs font-bold uppercase tracking-wider">WhatsApp Number (optional)</label>
+                        <input
+                            className="nb-input mt-1 font-mono"
+                            placeholder="+919876543210 — adds 💬 WhatsApp link to every ad caption"
+                            value={form.whatsapp_number}
+                            onChange={(e) => setForm({ ...form, whatsapp_number: e.target.value })}
+                            data-testid="form-whatsapp-input"
+                        />
                     </div>
                 </div>
             </div>
@@ -268,6 +278,7 @@ const Websites = () => {
             cta_url: w.cta_url || "",
             lead_form_url: w.lead_form_url || "",
             lead_webhook_url: w.lead_webhook_url || "",
+            whatsapp_number: w.whatsapp_number || "",
             auto_generate: !!w.auto_generate,
         });
         setShowForm(true);

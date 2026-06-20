@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { apiClient } from "@/lib/api";
-import { Key, Save, ExternalLink, ShieldCheck } from "lucide-react";
+import { Key, Save, ExternalLink, ShieldCheck, Bell } from "lucide-react";
 import { toast } from "sonner";
 
 const PageHeader = () => (
@@ -47,6 +47,43 @@ const CredentialField = ({ label, value, onChange, type = "text", placeholder, t
     </div>
 );
 
+const TelegramSection = ({ form, setForm }) => (
+    <div className="border-2 border-black p-4 bg-[#BAE6FD]">
+        <div className="flex items-center gap-2">
+            <Bell size={18} strokeWidth={2.5} />
+            <h3 className="font-display font-bold text-lg">Real-time Lead Alerts (Telegram)</h3>
+        </div>
+        <p className="text-xs mt-2 font-medium">
+            जैसे ही कोई नया lead आए, instantly Telegram पर ping मिलेगा। Steps:
+        </p>
+        <ol className="text-xs mt-2 list-decimal list-inside font-medium space-y-1">
+            <li>Telegram पर <strong>@BotFather</strong> को message करें → /newbot → token लें</li>
+            <li>उस bot को अपने chat में add करें और एक message भेजें</li>
+            <li><code className="bg-white px-1 border border-black">api.telegram.org/bot&lt;TOKEN&gt;/getUpdates</code> खोलें → `chat.id` copy करें</li>
+            <li>नीचे दोनों paste करें ↓</li>
+        </ol>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-3">
+            <CredentialField
+                label="Bot Token"
+                mono
+                type="password"
+                placeholder="1234567890:ABCdef..."
+                value={form.telegram_bot_token}
+                onChange={(v) => setForm({ ...form, telegram_bot_token: v })}
+                testid="tg-token-input"
+            />
+            <CredentialField
+                label="Chat ID"
+                mono
+                placeholder="123456789 (or -100123 for group)"
+                value={form.telegram_chat_id}
+                onChange={(v) => setForm({ ...form, telegram_chat_id: v })}
+                testid="tg-chat-input"
+            />
+        </div>
+    </div>
+);
+
 const SettingsForm = ({ form, setForm, saving, onSubmit }) => (
     <form onSubmit={onSubmit} className="nb-card p-6 space-y-4" data-testid="settings-form">
         <div className="flex items-center gap-2">
@@ -83,6 +120,8 @@ const SettingsForm = ({ form, setForm, saving, onSubmit }) => (
             />
         </div>
 
+        <TelegramSection form={form} setForm={setForm} />
+
         <div className="flex flex-wrap gap-3 pt-2">
             <button type="submit" className="nb-btn nb-btn-primary" disabled={saving} data-testid="save-settings-btn">
                 {saving ? <div className="nb-spinner" /> : <Save size={16} strokeWidth={2.5} />} Save
@@ -106,7 +145,13 @@ const SettingsForm = ({ form, setForm, saving, onSubmit }) => (
 );
 
 const Settings = () => {
-    const [form, setForm] = useState({ fb_access_token: "", fb_page_id: "", ig_account_id: "" });
+    const [form, setForm] = useState({
+        fb_access_token: "",
+        fb_page_id: "",
+        ig_account_id: "",
+        telegram_bot_token: "",
+        telegram_chat_id: "",
+    });
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
 
@@ -117,6 +162,8 @@ const Settings = () => {
                 fb_access_token: res.data.fb_access_token || "",
                 fb_page_id: res.data.fb_page_id || "",
                 ig_account_id: res.data.ig_account_id || "",
+                telegram_bot_token: res.data.telegram_bot_token || "",
+                telegram_chat_id: res.data.telegram_chat_id || "",
             });
         } catch {
             toast.error("Could not load settings");
