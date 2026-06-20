@@ -1,0 +1,42 @@
+{
+  "summary": "Iteration 4 backend testing: 14/14 pytest tests PASSED. Verified (1) auth gate on /ads/{id}/download/image, /download/video, /publish — all return 401 without bearer; (2) tenant isolation — cross-tenant requests with another user's token return 404; (3) owner_id now correctly populated on Ad model and persisted to DB; (4) automatic logo watermarking via Pillow + Google Favicon — generated PNG bottom-right region shows the white badge (avg brightness 200 on latest variant); (5) publish_ad with owner token but no fb_access_token returns 400 with 'Set FB Access Token...' message; (6) variants are owner-gated, charge wallet, and also receive the watermark; (7) public /api/public/leads/{wid} still works without auth.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "POST /api/ads/{id}/publish", "issue": "Error message still reads 'Set FB Access Token in Settings first' instead of 'in this website's settings first' — minor copy issue called out in iteration_3.json. Test still passes because the substring 'FB Access Token' matches. Consider updating wording for clarity since creds are now per-website."},
+      {"endpoint": "POST /api/ads/{id}/publish", "issue": "Code still falls back to legacy global db.meta_settings collection (line ~1005). MetaSettings pydantic model is dead code per iteration_3 review. Not breaking, but should be removed for clean multi-tenant architecture."},
+      {"endpoint": "Review-request URL mismatch", "issue": "Review request says POST /api/apply/{website_id} is the public lead endpoint, but actual backend route is POST /api/public/leads/{wid}. /apply/{id} is the FRONTEND path. No backend issue — clarification for main agent."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_watermark_and_auth.py",
+    "/app/test_reports/pytest/pytest_iter4.xml"
+  ],
+  "action_items": [
+    "Optional: clean up legacy db.meta_settings fallback inside publish_ad (lines ~1005-1008 of server.py) and delete the now-unused MetaSettings pydantic class.",
+    "Optional: refine publish_ad error text to mention 'this website's settings' so users know where to set FB creds.",
+    "Optional: refactor /app/backend/server.py (1342 lines) into routers/services modules — flagged since iteration_3."
+  ],
+  "critical_code_review_comments": [
+    "_apply_logo_watermark catches all exceptions silently (logger.exception only) — image is still saved without badge if Pillow fails. Acceptable for graceful degradation, but main agent may want to expose a 'watermark_failed' flag on the Ad doc so the UI can surface it.",
+    "_fetch_website_logo_bytes makes up to 3 outbound HTTP calls (HTML scrape, /favicon.ico, Google favicon API) with 6s timeouts each — worst case 18s added to ad generation latency on a slow site. Currently observed total ad-gen time ~25s per ad which is acceptable.",
+    "server.py is now 1342 lines (was 1162 in iter3) — well over 700-line threshold. Strongly recommend splitting into routers (ads, websites, leads, admin, auth) and services (llm, publish, watermark, scheduler).",
+    "Watermark code only writes PNG (line 419) but ad image is saved as .png so that's fine. Quality 235 alpha gives a tasteful semi-translucent white badge.",
+    "Variant endpoint correctly re-applies watermark via _generate_image_to_file — verified by test."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_watermark_and_auth.py (created — 14 tests)"
+  ],
+  "success_rate": {"backend": "100% (14/14)", "frontend": "skipped per review_request"},
+  "test_credentials": "admin: manish99346626@gmail.com / Manish@1234 (from /app/memory/test_credentials.md). Created ephemeral non-admin test_other_<uuid>@example.com / TestPass@123 for cross-tenant tests, auto-deleted via fixture teardown.",
+  "seed_data_creation": "Fixture-scoped TEST_WatermarkSite (https://www.python.org) + 1 ad + 1 variant + 1 public lead — all auto-cleaned by fixture teardown. No persistent test data left in DB.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "All security gates (auth + tenant isolation) on download_image/download_video/publish_ad are now correctly enforced. Logo watermark works for python.org (uses Google Favicon API since most ad-gen sites won't expose <link rel=icon>). Visual verification: bottom-right ~80x80 px region of generated PNG should have avg brightness >150 when watermark renders successfully. Tests skip Sora-2 video gen (cost). publish_ad's success path with REAL FB creds was not exercised — only the 'no token' 400 path. Backend file is now 1342 lines — refactor still pending.",
+  "rca of the issue": "No bugs reproduced this iteration — main agent's iter-4 fixes (auth Depends on 3 endpoints + owner_id on Ad pydantic + Pillow watermarking) all work as designed. Only nit: publish_ad still references legacy global meta_settings as fallback, which is harmless but should be removed for clean multi-tenant code."
+}

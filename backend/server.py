@@ -194,6 +194,7 @@ class ScrapeRequest(BaseModel):
 class Ad(BaseModel):
     model_config = ConfigDict(extra="ignore")
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    owner_id: str = ""
     website_id: Optional[str] = None
     website_name: Optional[str] = None
     topic: str
@@ -273,8 +274,160 @@ async def _llm_text(system: str, user_text: str) -> str:
     return await chat.send_message(UserMessage(text=user_text))
 
 
-async def _generate_image_to_file(prompt: str, ad_id: str) -> str:
-    """Generate image with Nano Banana, save to disk, return relative path."""
+def _fetch_website_logo_bytes(website_url: str) -> Optional[bytes]:
+    """Best-effort logo fetch. Tries <link rel=icon> / og:image / /favicon.ico, then Google Favicon API."""
+    from urllib.parse import urljoin, urlparse
+
+    headers = {"User-Agent": "Mozilla/5.0 (compatible; AI-Ads-Studio/1.0)"}
+
+    def _looks_like_image(resp: requests.Response) -> bool:
+        ct = (resp.headers.get("content-type") or "").lower()
+        return resp.ok and bool(resp.content) and len(resp.content) > 200 and "image" in ct
+
+    # 1) Parse HTML for <link rel="icon|shortcut icon|apple-touch-icon"> & og:image
+    try:
+        resp = requests.get(website_url, headers=headers, timeout=6)
+        if resp.ok:
+            soup = BeautifulSoup(resp.text, "lxml")
+            candidates: List[str] = []
+            for tag in soup.find_all("link"):
+                rel = tag.get("rel") or []
+                if isinstance(rel, str):
+                    rel = [rel]
+                rel_str = " ".join(rel).lower()
+                if any(k in rel_str for k in ("apple-touch-icon", "icon")):
+                    href = tag.get("href")
+                    if href:
+                        candidates.append(urljoin(website_url, href))
+            og = soup.find("meta", attrs={"property": "og:image"})
+            if og and og.get("content"):
+                candidates.append(urljoin(website_url, og["content"]))
+            for c in candidates:
+                try:
+                    r = requests.get(c, headers=headers, timeout=6)
+                    if _looks_like_image(r):
+                        return r.content
+                except requests.RequestException:
+                    continue
+    except requests.RequestException:
+        pass
+
+    # 2) Try /favicon.ico at root
+    try:
+        parsed = urlparse(website_url)
+        root = f"{parsed.scheme}://{parsed.netloc}"
+        r = requests.get(f"{root}/favicon.ico", headers=headers, timeout=6)
+        if _looks_like_image(r):
+            return r.content
+    except requests.RequestException:
+        pass
+
+    # 3) Google Favicon API fallback
+    try:
+        host = urlparse(website_url).netloc or website_url
+        fav = requests.get(
+            f"https://www.google.com/s2/favicons?domain={host}&sz=128",
+            headers=headers,
+            timeout=6,
+        )
+        if fav.ok and fav.content and len(fav.content) > 300:
+            return fav.content
+    except requests.RequestException:
+        pass
+    return None
+
+
+def _apply_logo_watermark(
+    image_path: Path, website_url: Optional[str], brand_text: Optional[str] = None
+) -> None:
+    """Composite the website's logo (and optional brand text) onto the bottom-right of the ad."""
+    if not website_url and not brand_text:
+        return
+    try:
+        from io import BytesIO
+
+        from PIL import Image, ImageDraw, ImageFont
+
+        base = Image.open(image_path).convert("RGBA")
+        bw, bh = base.size
+
+        logo_img: Optional["Image.Image"] = None
+        if website_url:
+            logo_bytes = _fetch_website_logo_bytes(website_url)
+            if logo_bytes:
+                try:
+                    logo_img = Image.open(BytesIO(logo_bytes)).convert("RGBA")
+                except Exception:  # noqa: BLE001
+                    logo_img = None
+
+        # Resize logo to ~14% of shorter side
+        if logo_img is not None:
+            target = max(96, int(min(bw, bh) * 0.14))
+            ratio = target / max(logo_img.size)
+            new_size = (max(1, int(logo_img.size[0] * ratio)), max(1, int(logo_img.size[1] * ratio)))
+            logo_img = logo_img.resize(new_size, Image.LANCZOS)
+
+        # Prepare text
+        text = (brand_text or "").strip()
+        font = None
+        text_size = (0, 0)
+        if text:
+            font_size = max(20, int(min(bw, bh) * 0.028))
+            for candidate in (
+                "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+                "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
+            ):
+                if Path(candidate).exists():
+                    font = ImageFont.truetype(candidate, font_size)
+                    break
+            if font is None:
+                font = ImageFont.load_default()
+            # measure
+            tmp = Image.new("RGBA", (1, 1))
+            d = ImageDraw.Draw(tmp)
+            bbox = d.textbbox((0, 0), text, font=font)
+            text_size = (bbox[2] - bbox[0], bbox[3] - bbox[1])
+
+        # Layout: badge contains logo (left) + text (right), stacked horizontally
+        pad = max(10, int(min(bw, bh) * 0.012))
+        gap = pad
+        logo_w, logo_h = (logo_img.size if logo_img is not None else (0, 0))
+        content_w = logo_w + (gap if (logo_w and text_size[0]) else 0) + text_size[0]
+        content_h = max(logo_h, text_size[1])
+        if content_w == 0 or content_h == 0:
+            return
+        badge_w = content_w + pad * 2
+        badge_h = content_h + pad * 2
+        badge = Image.new("RGBA", (badge_w, badge_h), (255, 255, 255, 235))
+
+        # paste logo
+        cursor_x = pad
+        if logo_img is not None:
+            ly = pad + (content_h - logo_h) // 2
+            badge.alpha_composite(logo_img, dest=(cursor_x, ly))
+            cursor_x += logo_w + gap
+
+        # draw text on badge
+        if text:
+            draw = ImageDraw.Draw(badge)
+            ty = pad + (content_h - text_size[1]) // 2
+            draw.text((cursor_x, ty), text, fill=(20, 20, 20, 255), font=font)
+
+        margin = max(16, int(min(bw, bh) * 0.025))
+        pos = (bw - badge_w - margin, bh - badge_h - margin)
+        base.alpha_composite(badge, dest=pos)
+        base.convert("RGB").save(image_path, format="PNG")
+    except Exception:  # noqa: BLE001
+        logger.exception("Watermark failed for %s", website_url)
+
+
+async def _generate_image_to_file(
+    prompt: str,
+    ad_id: str,
+    website_url: Optional[str] = None,
+    brand_text: Optional[str] = None,
+) -> str:
+    """Generate image with Nano Banana, save to disk, watermark, return relative path."""
     from emergentintegrations.llm.chat import LlmChat, UserMessage
 
     api_key = os.environ["EMERGENT_LLM_KEY"]
@@ -291,6 +444,8 @@ async def _generate_image_to_file(prompt: str, ad_id: str) -> str:
     image_bytes = base64.b64decode(images[0]["data"])
     out_path = IMAGES_DIR / f"{ad_id}.png"
     out_path.write_bytes(image_bytes)
+    # Overlay the website's logo + brand name as a watermark (bottom-right)
+    _apply_logo_watermark(out_path, website_url, brand_text)
     return f"images/{ad_id}.png"
 
 
@@ -551,7 +706,12 @@ async def generate_ad(
 
     if payload.include_image and ad.image_prompt:
         try:
-            ad.image_path = await _generate_image_to_file(ad.image_prompt, ad_id)
+            ad.image_path = await _generate_image_to_file(
+                ad.image_prompt,
+                ad_id,
+                site.get("url") if site else None,
+                website_name,
+            )
         except Exception as e:  # noqa: BLE001
             logger.exception("Image gen failed")
             raise HTTPException(500, f"Image generation failed: {e}")
@@ -644,8 +804,11 @@ async def delete_ad(ad_id: str, user=Depends(get_current_user)) -> Dict[str, boo
 
 
 @api_router.get("/ads/{ad_id}/download/image")
-async def download_image(ad_id: str) -> FileResponse:
-    doc = await db.ads.find_one({"id": ad_id}, {"_id": 0})
+async def download_image(ad_id: str, user=Depends(get_current_user)) -> FileResponse:
+    q: Dict[str, Any] = {"id": ad_id}
+    if user["role"] != "admin":
+        q["owner_id"] = user["id"]
+    doc = await db.ads.find_one(q, {"_id": 0})
     if not doc or not doc.get("image_path"):
         raise HTTPException(404, "Image not found")
     path = MEDIA_DIR / doc["image_path"]
@@ -656,8 +819,11 @@ async def download_image(ad_id: str) -> FileResponse:
 
 
 @api_router.get("/ads/{ad_id}/download/video")
-async def download_video(ad_id: str) -> FileResponse:
-    doc = await db.ads.find_one({"id": ad_id}, {"_id": 0})
+async def download_video(ad_id: str, user=Depends(get_current_user)) -> FileResponse:
+    q: Dict[str, Any] = {"id": ad_id}
+    if user["role"] != "admin":
+        q["owner_id"] = user["id"]
+    doc = await db.ads.find_one(q, {"_id": 0})
     if not doc or not doc.get("video_path"):
         raise HTTPException(404, "Video not found")
     path = MEDIA_DIR / doc["video_path"]
@@ -822,17 +988,24 @@ def _format_caption(ad: Dict[str, Any]) -> str:
 
 
 @api_router.post("/ads/{ad_id}/publish")
-async def publish_ad(ad_id: str, payload: PublishRequest) -> Dict[str, Any]:
-    ad = await db.ads.find_one({"id": ad_id}, {"_id": 0})
+async def publish_ad(
+    ad_id: str, payload: PublishRequest, user=Depends(get_current_user)
+) -> Dict[str, Any]:
+    q: Dict[str, Any] = {"id": ad_id}
+    if user["role"] != "admin":
+        q["owner_id"] = user["id"]
+    ad = await db.ads.find_one(q, {"_id": 0})
     if not ad:
         raise HTTPException(404, "Ad not found")
     if not ad.get("image_path"):
         raise HTTPException(400, "Ad has no image to publish")
 
+    # Prefer per-website credentials; fall back to global settings for legacy support
+    site = await _resolve_website(ad.get("website_id")) if ad.get("website_id") else None
     settings = await db.meta_settings.find_one({}, {"_id": 0}) or {}
-    token = settings.get("fb_access_token") or ""
-    page_id = settings.get("fb_page_id") or ""
-    ig_id = settings.get("ig_account_id") or ""
+    token = (site or {}).get("fb_access_token") or settings.get("fb_access_token") or ""
+    page_id = (site or {}).get("fb_page_id") or settings.get("fb_page_id") or ""
+    ig_id = (site or {}).get("ig_account_id") or settings.get("ig_account_id") or ""
 
     if not token:
         raise HTTPException(400, "Set FB Access Token in Settings first")
@@ -915,7 +1088,12 @@ async def create_variant(ad_id: str, user=Depends(get_current_user)) -> Ad:
     )
     if variant.image_prompt:
         try:
-            variant.image_path = await _generate_image_to_file(variant.image_prompt, new_id)
+            variant.image_path = await _generate_image_to_file(
+                variant.image_prompt,
+                new_id,
+                site.get("url") if site else None,
+                parent.get("website_name"),
+            )
         except Exception as e:  # noqa: BLE001
             logger.exception("Variant image gen failed")
             raise HTTPException(500, f"Variant image generation failed: {e}")
@@ -969,7 +1147,9 @@ async def _auto_generate_for_website(site: Dict[str, Any]) -> None:
             video_prompt=parsed.get("video_prompt", ""),
         )
         if ad.image_prompt:
-            ad.image_path = await _generate_image_to_file(ad.image_prompt, new_id)
+            ad.image_path = await _generate_image_to_file(
+                ad.image_prompt, new_id, site.get("url"), site.get("name")
+            )
         await db.ads.insert_one(ad.model_dump())
         await db.websites.update_one(
             {"id": site["id"]}, {"$set": {"last_auto_run_at": now_iso()}}
