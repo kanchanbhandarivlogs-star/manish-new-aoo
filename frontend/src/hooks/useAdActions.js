@@ -53,5 +53,27 @@ export const useAdActions = ({ onChanged, onDeleted } = {}) => {
         toast.success("Caption copied");
     }, []);
 
-    return { updateStatus, remove, downloadFile, copyCaption };
+    const publish = useCallback(async (id, platforms) => {
+        const t = toast.loading(`Publishing to ${platforms.join(" + ")}...`);
+        try {
+            const res = await apiClient.post(`/ads/${id}/publish`, { platforms });
+            toast.success(`Published to ${(res.data.published_to || []).join(", ")}`, { id: t });
+            onChanged?.();
+        } catch (err) {
+            toast.error(err.response?.data?.detail || "Publish failed", { id: t });
+        }
+    }, [onChanged]);
+
+    const createVariant = useCallback(async (id) => {
+        const t = toast.loading("Cooking variant...");
+        try {
+            await apiClient.post(`/ads/${id}/variants`);
+            toast.success("Variant generated", { id: t });
+            onChanged?.();
+        } catch (err) {
+            toast.error(err.response?.data?.detail || "Variant failed", { id: t });
+        }
+    }, [onChanged]);
+
+    return { updateStatus, remove, downloadFile, copyCaption, publish, createVariant };
 };

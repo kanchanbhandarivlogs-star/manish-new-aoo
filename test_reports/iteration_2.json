@@ -1,0 +1,43 @@
+{
+  "summary": "Iteration 2 — verified the 3 NEW features (Meta auto-publish, peak-hour scheduler, A/B variants). Backend: 16/16 new pytest cases pass (scheduler/status shape, website auto_generate CRUD, variants endpoint correctness, publish 400/502 validation, published_to stays empty on failure, image served via /api/media). Frontend Playwright: ZERO console errors on /, /websites, /generate, /gallery, /settings; Add-website yellow auto-generate checkbox works and a black 'Auto-gen ON' badge renders; Gallery detail modal renders publish-fb-btn / publish-ig-btn / publish-both-btn / variant-btn; clicking Variant shows 'Cooking variant…' loading toast then 'Variant generated' success toast in ~18s and the gallery list grows by one card; publish-fb-btn click against fake token does NOT crash the app (backend 502, no 500).",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "/api/ads/{id}/publish", "issue": "Backend raises HTTPException(502, '<meta error detail>'). The hosting Cloudflare/Emergent edge intercepts ANY upstream 502 and replaces the JSON body with its own HTML 'Bad gateway' page, so the frontend (axios) never sees the structured `detail` field — toast falls back to generic 'Publish failed'. Consider returning 400 (or 422) for upstream Meta validation errors so the structured JSON detail survives the proxy."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [
+      {"flow": "Publish FB error", "issue": "Because backend returns 502 and Cloudflare strips the body to HTML, axios err.response.data is an HTML string, so `err.response?.data?.detail` is undefined and the toast shows the generic 'Publish failed' instead of Meta's reason. Functionally non-blocking — publish flow doesn't crash and published_to stays empty.", "affected_selectors": ["[data-testid=\"publish-fb-btn\"]", "[data-testid=\"publish-ig-btn\"]", "[data-testid=\"publish-both-btn\"]"]}
+    ],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/backend_test.py",
+    "/app/backend/tests/test_new_features.py",
+    "/app/test_reports/pytest/pytest_new_features.xml"
+  ],
+  "action_items": [
+    "Optional: change publish endpoint failure status from 502 → 400/422 so the JSON detail survives the Cloudflare edge and the user sees a meaningful toast (currently falls back to 'Publish failed').",
+    "Optional: in useAdActions.publish(), if err.response.status is 502 and data is non-JSON, show a friendlier hint ('Meta rejected this request — check your access token & page id in Settings')."
+  ],
+  "critical_code_review_comments": [
+    "server.py: _post_to_facebook_page / _post_to_instagram make synchronous `requests.post` calls inside an async FastAPI route — these block the event loop. Consider httpx.AsyncClient or run_in_executor for production scale.",
+    "server.py: _scheduler_loop wakes every 60s but only checks `last_auto_run_at.startswith(hour_str)`. If the LLM image generation for an opted-in website takes >60s during a peak hour, two scheduler ticks could overlap before last_auto_run_at is written. Consider an in-memory 'running' set or a Mongo $setOnInsert advisory lock.",
+    "server.py: PUBLIC_BACKEND_URL is required for Meta to fetch the image. _public_media_url() silently falls back to '' (empty base) if neither env var is set — Meta would then receive a bad URL and fail. Recommend asserting at startup.",
+    "server.py: /api/meta-settings PUT uses filter `{}` for upsert — if two docs ever land in db.meta_settings the update_one would only patch the first match. Consider always upserting with a fixed `{id: 'singleton'}` filter.",
+    "Gallery.jsx: AdDetailModal renders Publish buttons only when ad.image_path is set — correct. variant-btn always renders, which is fine, but it would be nicer to disable it on already-pending variants.",
+    "useAdActions.publish(): only `err.response?.data?.detail` is checked; when the proxy returns HTML this is undefined. Also worth surfacing res.data.results to indicate partial success when one platform of 'both' succeeds and the other fails."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_new_features.py (created)"
+  ],
+  "success_rate": {"backend": "100% (39/39 — 23 existing + 16 new)", "frontend": "100% (all critical new flows pass)"},
+  "test_credentials": "Not applicable — no auth in this app.",
+  "seed_data_creation": "All Playwright/pytest test data is TEST_-prefixed and removed at the end of each test class / playwright run. Meta settings are reset to empty strings on teardown. No residual data left in DB.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Backend regression suite has two files: /app/backend/tests/backend_test.py (23 tests for core CRUD + image gen) and /app/backend/tests/test_new_features.py (16 tests for scheduler/auto_generate/variants/publish). Run with: REACT_APP_BACKEND_URL=$(grep REACT_APP_BACKEND_URL /app/frontend/.env | cut -d= -f2) pytest /app/backend/tests/ -v. Generation tests use real Emergent LLM (GPT-5.2 + Nano Banana) — image-only ad takes ~15-20s; variant takes ~18s. Sora 2 video tests are intentionally skipped. The hosting edge (Cloudflare) intercepts any upstream HTTP 502 and replaces the body with an HTML 'Bad gateway' page — keep this in mind if you assert on JSON bodies for error responses that the backend emits as 502. Useful frontend testids added in this iteration: form-auto-generate, auto-gen-{id}, publish-fb-btn, publish-ig-btn, publish-both-btn, variant-btn, close-detail-btn, ad-detail-modal, published-{platform}.",
+  "rca of the issue": "Generic 'Publish failed' toast (rather than Meta's specific error) is caused by the hosting CDN replacing 5xx upstream bodies. Backend code is correct; only the choice of HTTP status code is suboptimal for this deployment topology. Mitigation: return 400 from publish_ad on Meta errors and keep the detail string intact, OR have the frontend inspect err.response.status===502 and show a generic-but-helpful message."
+}

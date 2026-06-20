@@ -4,6 +4,7 @@ import { apiClient, mediaUrl } from "@/lib/api";
 import { useAdActions } from "@/hooks/useAdActions";
 import {
     Download, Trash2, CheckCircle2, Copy, ImagePlay, RefreshCw, X, Filter, Film,
+    Send, Shuffle, Facebook, Instagram,
 } from "lucide-react";
 
 const STATUS_OPTIONS = [
@@ -117,7 +118,7 @@ const VideoPreview = ({ ad }) => {
     );
 };
 
-const AdDetailModal = ({ ad, onClose, onApprove, onDownload, onDelete, onCopyCaption }) => (
+const AdDetailModal = ({ ad, onClose, onApprove, onDownload, onDelete, onCopyCaption, onPublish, onVariant }) => (
     <div
         className="fixed inset-0 bg-black/60 z-40 flex items-start justify-center p-4 md:p-8 overflow-y-auto"
         onClick={onClose}
@@ -133,6 +134,15 @@ const AdDetailModal = ({ ad, onClose, onApprove, onDownload, onDelete, onCopyCap
                     <span className={`nb-badge nb-badge-${ad.status}`}>{ad.status}</span>
                     <h2 className="font-display font-black text-2xl mt-2">{ad.topic}</h2>
                     {ad.website_name && <p className="text-xs font-mono mt-1">{ad.website_name}</p>}
+                    {(ad.published_to || []).length > 0 && (
+                        <div className="flex gap-1 mt-2">
+                            {ad.published_to.map((p) => (
+                                <span key={p} className="nb-badge !bg-[#A7F3D0]" data-testid={`published-${p}`}>
+                                    ✓ {p}
+                                </span>
+                            ))}
+                        </div>
+                    )}
                 </div>
                 <button className="nb-btn !p-2" onClick={onClose} data-testid="close-detail-btn">
                     <X size={16} />
@@ -197,6 +207,22 @@ const AdDetailModal = ({ ad, onClose, onApprove, onDownload, onDelete, onCopyCap
                         <Download size={16} strokeWidth={2.5} /> Download Video
                     </button>
                 )}
+                {ad.image_path && (
+                    <>
+                        <button className="nb-btn nb-btn-mint" onClick={() => onPublish(["facebook"])} data-testid="publish-fb-btn" title="Post to Facebook Page">
+                            <Facebook size={16} strokeWidth={2.5} /> Publish FB
+                        </button>
+                        <button className="nb-btn nb-btn-lavender" onClick={() => onPublish(["instagram"])} data-testid="publish-ig-btn" title="Post to Instagram Business">
+                            <Instagram size={16} strokeWidth={2.5} /> Publish IG
+                        </button>
+                        <button className="nb-btn" onClick={() => onPublish(["facebook", "instagram"])} data-testid="publish-both-btn" title="Post to both">
+                            <Send size={16} strokeWidth={2.5} /> Both
+                        </button>
+                    </>
+                )}
+                <button className="nb-btn nb-btn-primary" onClick={onVariant} data-testid="variant-btn" title="Generate A/B variant">
+                    <Shuffle size={16} strokeWidth={2.5} /> Variant
+                </button>
                 <button className="nb-btn nb-btn-danger ml-auto" onClick={onDelete} data-testid="delete-btn">
                     <Trash2 size={16} strokeWidth={2.5} /> Delete
                 </button>
@@ -298,7 +324,7 @@ const Gallery = () => {
         [ads, status, websiteFilter]
     );
 
-    const { updateStatus, remove, downloadFile, copyCaption } = useAdActions({
+    const { updateStatus, remove, downloadFile, copyCaption, publish, createVariant } = useAdActions({
         onChanged: load,
         onDeleted: () => setFocusAd(null),
     });
@@ -322,6 +348,8 @@ const Gallery = () => {
                     onDownload={(kind) => downloadFile(focusAd.id, kind)}
                     onDelete={() => remove(focusAd.id)}
                     onCopyCaption={() => copyCaption(focusAd)}
+                    onPublish={(platforms) => publish(focusAd.id, platforms)}
+                    onVariant={() => createVariant(focusAd.id)}
                 />
             )}
         </div>

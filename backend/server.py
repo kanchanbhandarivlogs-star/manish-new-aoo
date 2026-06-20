@@ -59,6 +59,8 @@ class Website(BaseModel):
     name: str
     url: str
     description: Optional[str] = ""
+    auto_generate: bool = False
+    last_auto_run_at: Optional[str] = None
     created_at: str = Field(default_factory=now_iso)
 
 
@@ -66,12 +68,14 @@ class WebsiteCreate(BaseModel):
     name: str
     url: str
     description: Optional[str] = ""
+    auto_generate: bool = False
 
 
 class WebsiteUpdate(BaseModel):
     name: Optional[str] = None
     url: Optional[str] = None
     description: Optional[str] = None
+    auto_generate: Optional[bool] = None
 
 
 class GenerateRequest(BaseModel):
@@ -103,11 +107,21 @@ class Ad(BaseModel):
     video_path: Optional[str] = None
     video_status: Literal["none", "pending", "ready", "failed"] = "none"
     status: Literal["draft", "approved", "downloaded"] = "draft"
+    published_to: List[str] = []
+    parent_ad_id: Optional[str] = None
     created_at: str = Field(default_factory=now_iso)
 
 
 class StatusUpdate(BaseModel):
     status: Literal["draft", "approved", "downloaded"]
+
+
+class PublishRequest(BaseModel):
+    platforms: List[Literal["facebook", "instagram"]] = ["facebook"]
+
+
+class VariantRequest(BaseModel):
+    tweak: Optional[str] = "Make it noticeably different in angle and visual style."
 
 
 class MetaSettings(BaseModel):
@@ -472,6 +486,219 @@ async def upsert_meta_settings(payload: MetaSettings) -> MetaSettings:
     payload.updated_at = now_iso()
     await db.meta_settings.update_one({}, {"$set": payload.model_dump()}, upsert=True)
     return payload
+
+
+# ---------------------- ROUTES: PUBLISH ----------------------
+META_GRAPH = "https://graph.facebook.com/v19.0"
+
+
+def _public_media_url(rel_path: str) -> str:
+    """Build a publicly-fetchable URL for Meta to download our generated media."""
+    base = os.environ.get("PUBLIC_BACKEND_URL") or os.environ.get("REACT_APP_BACKEND_URL", "")
+    base = base.rstrip("/")
+    return f"{base}/api/media/{rel_path}"
+
+
+def _post_to_facebook_page(token: str, page_id: str, image_url: str, caption: str) -> Dict[str, Any]:
+    resp = requests.post(
+        f"{META_GRAPH}/{page_id}/photos",
+        data={"url": image_url, "caption": caption, "access_token": token},
+        timeout=30,
+    )
+    if resp.status_code != 200:
+        raise RuntimeError(f"Facebook publish failed: {resp.status_code} {resp.text[:300]}")
+    return resp.json()
+
+
+def _post_to_instagram(token: str, ig_id: str, image_url: str, caption: str) -> Dict[str, Any]:
+    container = requests.post(
+        f"{META_GRAPH}/{ig_id}/media",
+        data={"image_url": image_url, "caption": caption, "access_token": token},
+        timeout=30,
+    )
+    if container.status_code != 200:
+        raise RuntimeError(f"Instagram container failed: {container.status_code} {container.text[:300]}")
+    creation_id = container.json().get("id")
+    publish = requests.post(
+        f"{META_GRAPH}/{ig_id}/media_publish",
+        data={"creation_id": creation_id, "access_token": token},
+        timeout=30,
+    )
+    if publish.status_code != 200:
+        raise RuntimeError(f"Instagram publish failed: {publish.status_code} {publish.text[:300]}")
+    return publish.json()
+
+
+def _format_caption(ad: Dict[str, Any]) -> str:
+    tags = " ".join(ad.get("hashtags") or [])
+    return f"{ad.get('caption', '')}\n\n{tags}".strip()
+
+
+@api_router.post("/ads/{ad_id}/publish")
+async def publish_ad(ad_id: str, payload: PublishRequest) -> Dict[str, Any]:
+    ad = await db.ads.find_one({"id": ad_id}, {"_id": 0})
+    if not ad:
+        raise HTTPException(404, "Ad not found")
+    if not ad.get("image_path"):
+        raise HTTPException(400, "Ad has no image to publish")
+
+    settings = await db.meta_settings.find_one({}, {"_id": 0}) or {}
+    token = settings.get("fb_access_token") or ""
+    page_id = settings.get("fb_page_id") or ""
+    ig_id = settings.get("ig_account_id") or ""
+
+    if not token:
+        raise HTTPException(400, "Set FB Access Token in Settings first")
+
+    image_url = _public_media_url(ad["image_path"])
+    caption = _format_caption(ad)
+    results: Dict[str, Any] = {}
+    published = list(ad.get("published_to") or [])
+
+    if "facebook" in payload.platforms:
+        if not page_id:
+            raise HTTPException(400, "Set Facebook Page ID in Settings first")
+        try:
+            results["facebook"] = _post_to_facebook_page(token, page_id, image_url, caption)
+            if "facebook" not in published:
+                published.append("facebook")
+        except Exception as e:  # noqa: BLE001
+            logger.exception("FB publish failed")
+            raise HTTPException(502, str(e))
+
+    if "instagram" in payload.platforms:
+        if not ig_id:
+            raise HTTPException(400, "Set Instagram Business Account ID in Settings first")
+        try:
+            results["instagram"] = _post_to_instagram(token, ig_id, image_url, caption)
+            if "instagram" not in published:
+                published.append("instagram")
+        except Exception as e:  # noqa: BLE001
+            logger.exception("IG publish failed")
+            raise HTTPException(502, str(e))
+
+    await db.ads.update_one(
+        {"id": ad_id},
+        {"$set": {"published_to": published, "status": "downloaded"}},
+    )
+    return {"ok": True, "published_to": published, "results": results}
+
+
+# ---------------------- ROUTES: A/B VARIANTS ----------------------
+@api_router.post("/ads/{ad_id}/variants", response_model=Ad)
+async def create_variant(ad_id: str) -> Ad:
+    """Regenerate a fresh image + caption variant from the same brief."""
+    parent = await db.ads.find_one({"id": ad_id}, {"_id": 0})
+    if not parent:
+        raise HTTPException(404, "Ad not found")
+
+    payload = GenerateRequest(
+        website_id=parent.get("website_id"),
+        topic=parent["topic"],
+        include_image=True,
+        include_video=False,
+    )
+    raw = await _llm_text(
+        _CREATIVE_SYSTEM + " Produce a noticeably different angle from previous attempts.",
+        _build_creative_prompt(payload, parent.get("website_name")),
+    )
+    parsed = _parse_creative_json(raw)
+    new_id = str(uuid.uuid4())
+    variant = Ad(
+        id=new_id,
+        website_id=parent.get("website_id"),
+        website_name=parent.get("website_name"),
+        topic=parent["topic"],
+        caption=parsed.get("caption", ""),
+        hashtags=parsed.get("hashtags", []),
+        image_prompt=parsed.get("image_prompt", ""),
+        video_prompt=parsed.get("video_prompt", ""),
+        parent_ad_id=ad_id,
+    )
+    if variant.image_prompt:
+        try:
+            variant.image_path = await _generate_image_to_file(variant.image_prompt, new_id)
+        except Exception as e:  # noqa: BLE001
+            logger.exception("Variant image gen failed")
+            raise HTTPException(500, f"Variant image generation failed: {e}")
+    await db.ads.insert_one(variant.model_dump())
+    return variant
+
+
+# ---------------------- SCHEDULER: PEAK-HOUR AUTO-GEN ----------------------
+PEAK_HOURS = {9, 13, 18}  # 9 AM / 1 PM / 6 PM (server timezone)
+SCHEDULER_TICK_SEC = 60
+
+
+async def _auto_generate_for_website(site: Dict[str, Any]) -> None:
+    """Scrape the website + create one approved-ready ad."""
+    try:
+        scraped = await _scrape_url(site["url"])
+        topic_seed = scraped.get("title") or scraped.get("description") or site["name"]
+        body_hint = scraped.get("body", "")
+        topic = f"{topic_seed}{' — ' + body_hint[:300] if body_hint else ''}".strip()
+        payload = GenerateRequest(
+            website_id=site["id"],
+            topic=topic,
+            include_image=True,
+            include_video=False,
+        )
+        raw = await _llm_text(_CREATIVE_SYSTEM, _build_creative_prompt(payload, site["name"]))
+        parsed = _parse_creative_json(raw)
+        new_id = str(uuid.uuid4())
+        ad = Ad(
+            id=new_id,
+            website_id=site["id"],
+            website_name=site["name"],
+            topic=topic,
+            caption=parsed.get("caption", ""),
+            hashtags=parsed.get("hashtags", []),
+            image_prompt=parsed.get("image_prompt", ""),
+            video_prompt=parsed.get("video_prompt", ""),
+        )
+        if ad.image_prompt:
+            ad.image_path = await _generate_image_to_file(ad.image_prompt, new_id)
+        await db.ads.insert_one(ad.model_dump())
+        await db.websites.update_one(
+            {"id": site["id"]}, {"$set": {"last_auto_run_at": now_iso()}}
+        )
+        logger.info(f"Auto-generated ad {new_id} for {site['name']}")
+    except Exception:  # noqa: BLE001
+        logger.exception(f"Auto-gen failed for website {site.get('id')}")
+
+
+async def _scheduler_loop() -> None:
+    """Wake up every minute; on peak hours, run auto-gen for opted-in websites."""
+    while True:
+        try:
+            now = datetime.now(timezone.utc)
+            hour_str = now.strftime("%Y-%m-%dT%H")
+            if now.hour in PEAK_HOURS:
+                async for site in db.websites.find({"auto_generate": True}, {"_id": 0}):
+                    last = site.get("last_auto_run_at") or ""
+                    # only run if last run was in a different hour-bucket
+                    if not last.startswith(hour_str):
+                        await _auto_generate_for_website(site)
+        except Exception:  # noqa: BLE001
+            logger.exception("scheduler tick failed")
+        await asyncio.sleep(SCHEDULER_TICK_SEC)
+
+
+@api_router.get("/scheduler/status")
+async def scheduler_status() -> Dict[str, Any]:
+    now = datetime.now(timezone.utc)
+    opted = await db.websites.count_documents({"auto_generate": True})
+    return {
+        "peak_hours_utc": sorted(PEAK_HOURS),
+        "current_hour_utc": now.hour,
+        "is_peak_now": now.hour in PEAK_HOURS,
+        "websites_opted_in": opted,
+    }
+
+
+@app.on_event("startup")
+async def _start_scheduler() -> None:
+    asyncio.create_task(_scheduler_loop())
 
 
 # ---------------------- APP WIRING ----------------------

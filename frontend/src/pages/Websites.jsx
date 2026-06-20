@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useState } from "react";
 import { apiClient } from "@/lib/api";
 import { useWebsiteCrud } from "@/hooks/useWebsiteCrud";
-import { Plus, Trash2, Pencil, Globe, X, Check } from "lucide-react";
+import { Plus, Trash2, Pencil, Globe, X, Check, Zap } from "lucide-react";
 import { toast } from "sonner";
 
-const emptyForm = { name: "", url: "", description: "" };
+const emptyForm = { name: "", url: "", description: "", auto_generate: false };
 
 const CARD_COLORS = ["bg-white", "bg-[#FFDBCB]", "bg-[#BAE6FD]", "bg-[#A7F3D0]", "bg-[#DDD6FE]"];
 
@@ -47,6 +47,20 @@ const WebsiteForm = ({ editingId, form, setForm, submitting, onSubmit, onClose }
                     data-testid="form-desc-input"
                 />
             </div>
+            <label className="md:col-span-2 flex items-center gap-3 p-3 border-2 border-black bg-[#FFD84D] cursor-pointer" data-testid="form-auto-generate">
+                <input
+                    type="checkbox"
+                    checked={!!form.auto_generate}
+                    onChange={(e) => setForm({ ...form, auto_generate: e.target.checked })}
+                    className="w-5 h-5 accent-black"
+                />
+                <div>
+                    <p className="font-bold uppercase tracking-wider text-sm flex items-center gap-2">
+                        <Zap size={14} strokeWidth={3} /> Auto-generate at peak hours
+                    </p>
+                    <p className="text-xs">9 AM, 1 PM, 6 PM UTC — fresh Draft ad every peak window.</p>
+                </div>
+            </label>
             <div className="md:col-span-2 flex gap-3">
                 <button type="submit" className="nb-btn nb-btn-mint" disabled={submitting} data-testid="form-submit-btn">
                     {submitting ? <div className="nb-spinner" /> : <Check size={16} />}
@@ -96,6 +110,11 @@ const WebsiteCard = ({ website, color, onEdit, onDelete }) => (
             {website.url}
         </a>
         {website.description && <p className="text-sm mt-3 font-medium">{website.description}</p>}
+        {website.auto_generate && (
+            <span className="nb-badge !bg-black !text-white mt-3 inline-flex" data-testid={`auto-gen-${website.id}`}>
+                <Zap size={10} strokeWidth={3} /> Auto-gen ON
+            </span>
+        )}
     </div>
 );
 
@@ -182,7 +201,12 @@ const Websites = () => {
 
     const startEdit = (w) => {
         setEditingId(w.id);
-        setForm({ name: w.name, url: w.url, description: w.description || "" });
+        setForm({
+            name: w.name,
+            url: w.url,
+            description: w.description || "",
+            auto_generate: !!w.auto_generate,
+        });
         setShowForm(true);
     };
 
