@@ -78,7 +78,19 @@ def _video_cost(duration: int) -> int:
 
 
 async def _charge_user(user_id: str, amount: int, reason: str) -> None:
-    """Atomic deduct from wallet; raise 402 if insufficient. Also logs txn."""
+    """Atomic deduct from wallet; raise 402 if insufficient. Also logs txn.
+    Admin accounts have unlimited credits — charge is skipped but logged.
+    """
+    user = await db.users.find_one({"id": user_id}, {"_id": 0, "role": 1})
+    if user and user.get("role") == "admin":
+        await db.wallet_txns.insert_one({
+            "id": str(uuid.uuid4()),
+            "user_id": user_id,
+            "amount": 0,
+            "reason": f"{reason} (admin — free)",
+            "created_at": now_iso(),
+        })
+        return
     res = await db.users.find_one_and_update(
         {"id": user_id, "wallet_balance": {"$gte": amount}},
         {"$inc": {"wallet_balance": -amount}},
@@ -885,7 +897,13 @@ async def wallet(user=Depends(get_current_user)) -> Dict[str, Any]:
     txns = await db.wallet_txns.find(
         {"user_id": user["id"]}, {"_id": 0}
     ).sort("created_at", -1).to_list(200)
-    return {"balance": user.get("wallet_balance", 0), "transactions": txns, "pricing": PRICING}
+    is_admin = user.get("role") == "admin"
+    return {
+        "balance": user.get("wallet_balance", 0),
+        "unlimited": is_admin,
+        "transactions": txns,
+        "pricing": PRICING,
+    }
 
 
 # ---------------------- ROUTES: ADMIN ----------------------
@@ -1111,9 +1129,12 @@ async def _auto_generate_for_website(site: Dict[str, Any]) -> None:
     owner_id = site.get("owner_id", "")
     if not owner_id:
         return
-    # check & charge owner credits before LLM calls
-    owner = await db.users.find_one({"id": owner_id}, {"_id": 0, "wallet_balance": 1})
-    if not owner or (owner.get("wallet_balance", 0) or 0) < PRICING["auto_gen"]:
+    # check & charge owner credits before LLM calls (admins get unlimited credits)
+    owner = await db.users.find_one({"id": owner_id}, {"_id": 0, "wallet_balance": 1, "role": 1})
+    if not owner:
+        logger.info(f"Skip auto-gen for {site.get('name')} — owner missing")
+        return
+    if owner.get("role") != "admin" and (owner.get("wallet_balance", 0) or 0) < PRICING["auto_gen"]:
         logger.info(f"Skip auto-gen for {site.get('name')} — insufficient credits")
         return
     try:

@@ -36,9 +36,13 @@ const Marquee = () => {
 
 const WalletBadge = () => {
     const [balance, setBalance] = useState(null);
+    const [unlimited, setUnlimited] = useState(false);
     useEffect(() => {
         const fetchBalance = () => {
-            apiClient.get("/wallet").then((r) => setBalance(r.data.balance)).catch(() => {});
+            apiClient.get("/wallet").then((r) => {
+                setBalance(r.data.balance);
+                setUnlimited(!!r.data.unlimited);
+            }).catch(() => {});
         };
         fetchBalance();
         const i = setInterval(fetchBalance, 30000);
@@ -46,7 +50,7 @@ const WalletBadge = () => {
     }, []);
     return (
         <span className="nb-badge nb-badge-approved !text-sm" data-testid="wallet-badge">
-            <Wallet size={12} strokeWidth={3} /> {balance ?? "—"} cr
+            <Wallet size={12} strokeWidth={3} /> {unlimited ? "∞ Unlimited" : `${balance ?? "—"} cr`}
         </span>
     );
 };
