@@ -1,0 +1,50 @@
+{
+  "summary": "Multi-tenant AI Ads Studio: 28/28 backend pytest tests passed (auth gating, admin gate, user CRUD, wallet top-up, credit deduction with real LLM image gen, 402 on insufficient balance, tenant isolation, per-website Meta fields, public lead form, branding, scheduler, stats). Frontend smoke: login flow, header (wallet+email+logout+nav-admin), branding footer, /admin/users, /websites with all three colored form sections (CTA & Lead Links, Meta per-website, Telegram), logout, and protected-route redirect ALL pass. Only console warning is a non-blocking React hydration notice on /generate page.",
+  "backend_issues": {
+    "critical": [
+      {"endpoint": "POST /api/ads/{ad_id}/publish", "issue": "Endpoint is NOT auth-protected (missing Depends(get_current_user)). Any caller knowing ad_id can publish anyone's ad. Also no owner check on the ad.", "priority": "CRITICAL"},
+      {"endpoint": "POST /api/ads/{ad_id}/publish", "issue": "Still reads GLOBAL db.meta_settings instead of the LINKED website's per-website credentials (fb_access_token / fb_page_id / ig_account_id). Error message says 'Set FB Access Token in Settings first' instead of required '...in this website's settings first'. Violates per-website Meta credentials requirement.", "priority": "CRITICAL"}
+    ],
+    "minor": [
+      {"endpoint": "GET /api/ads/{ad_id}/download/image and /download/video", "issue": "Both download endpoints are unauthenticated — anyone with an ad_id can fetch the media file. Should require get_current_user and check ownership."},
+      {"endpoint": "auth/me", "issue": "Returns wallet_balance from DB but no schema validation; tolerated. Minor."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "/generate (Generate page)", "issues": ["React hydration warning: <span> cannot be a child of <option> at Generate.jsx line ~39. Caused by dynamic wrapper around <option> children. Non-blocking but produces a console error on every load of /generate."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_multi_tenant.py",
+    "/app/test_reports/pytest/pytest_iter3.xml"
+  ],
+  "action_items": [
+    "Add Depends(get_current_user) to POST /api/ads/{ad_id}/publish and verify ad.owner_id matches caller (or admin).",
+    "Rewrite publish_ad to load credentials from the ad's LINKED website (db.websites.find_one({id: ad.website_id})) using fb_access_token / fb_page_id / ig_account_id. Update error message to 'Set FB Access Token in this website's settings first'. Remove dependency on db.meta_settings.",
+    "Add auth + ownership check on GET /api/ads/{ad_id}/download/image and /download/video.",
+    "Fix Generate.jsx <option> children — render plain text inside <option>, not a wrapped <span>.",
+    "Refactor /app/backend/server.py (1162 lines) into modules: routers/websites.py, routers/ads.py, routers/leads.py, routers/admin.py, services/llm.py, services/publish.py for maintainability."
+  ],
+  "critical_code_review_comments": [
+    "server.py exceeds 700-line threshold (1162 lines) — split into routers/services.",
+    "publish_ad still uses removed-conceptually global meta_settings table, conflicting with multi-tenant per-website credentials architecture.",
+    "Two download endpoints leak tenant data without auth.",
+    "MetaSettings Pydantic class is dead code now (not referenced by any active route) — safe to delete after publish refactor.",
+    "_charge_user correctly uses atomic find_one_and_update with $gte guard — good.",
+    "Tenant filter (owner_id) consistently applied on websites/ads/leads list/patch/delete for non-admin — verified by tests.",
+    "Scheduler loop pre-checks credits and uses _charge_user; good fail-safe."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_multi_tenant.py (created)"
+  ],
+  "success_rate": {"backend": "100% (28/28 functional tests)", "frontend": "100% on smoke (1 non-blocking React warning)"},
+  "test_credentials": "admin: manish99346626@gmail.com / Manish@1234 (from /app/memory/test_credentials.md)",
+  "seed_data_creation": "Created ~5 TEST_-prefixed users during pytest; all auto-deleted via teardown_module() calling DELETE /api/admin/users/{id}. Also created TEST_-prefixed websites under user_a fixture — left in DB (owned by deleted test users). Main agent may run: db.websites.deleteMany({name:/^TEST_/}) if cleanup desired.",
+  "retest_needed": true,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Backend functionally complete and stable. After main agent fixes the publish_ad endpoint (auth + per-website creds), re-run /app/backend/tests/test_multi_tenant.py and add tests for: (1) publish requires auth (401 without bearer), (2) publish returns 400 with 'Set FB Access Token in this website's settings first' when website has no fb_access_token, (3) publish uses website-linked creds. Sora-2 video generation was intentionally NOT tested (cost). Frontend testIds are all in place per the review_request, no selector issues encountered.",
+  "rca of the issue": "Publish endpoint was not migrated as part of the multi-tenant refactor — it still references the legacy global meta_settings collection (now unused) and skipped the new get_current_user dependency. Reproduction: curl -X POST {BASE}/api/ads/{any_ad_id}/publish -d '{\"platforms\":[\"facebook\"]}' (no token) — currently reaches the handler and returns 404/400 based on ad existence rather than 401. Mitigation: add Depends(get_current_user) + ownership check; replace settings lookup with await db.websites.find_one({id: ad['website_id']})."
+}
