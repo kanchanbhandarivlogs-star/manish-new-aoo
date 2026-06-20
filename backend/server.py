@@ -564,7 +564,7 @@ async def publish_ad(ad_id: str, payload: PublishRequest) -> Dict[str, Any]:
                 published.append("facebook")
         except Exception as e:  # noqa: BLE001
             logger.exception("FB publish failed")
-            raise HTTPException(502, str(e))
+            raise HTTPException(400, f"Facebook publish error: {e}")
 
     if "instagram" in payload.platforms:
         if not ig_id:
@@ -575,7 +575,7 @@ async def publish_ad(ad_id: str, payload: PublishRequest) -> Dict[str, Any]:
                 published.append("instagram")
         except Exception as e:  # noqa: BLE001
             logger.exception("IG publish failed")
-            raise HTTPException(502, str(e))
+            raise HTTPException(400, f"Instagram publish error: {e}")
 
     await db.ads.update_one(
         {"id": ad_id},
