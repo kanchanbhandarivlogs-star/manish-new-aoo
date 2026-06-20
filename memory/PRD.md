@@ -27,6 +27,13 @@ User runs collegeop.com and wants a free AI tool that generates social media ads
 - ✅ Dashboard stats + peak student-traffic hour suggestions
 - ✅ Neo-brutalist pastel UI with Outfit/Figtree fonts and marquee ticker
 
+## Implemented (Feb 20, 2026 — iter-4)
+- ✅ **Automatic logo watermarking** on every generated/variant/auto-gen ad image. Picks the website's `<link rel=icon>` / `apple-touch-icon` / `og:image` → `/favicon.ico` → Google Favicon API. If no logo found, falls back to a text-only brand-name badge. Composited bottom-right with a semi-translucent white badge for legibility on any background. (`_fetch_website_logo_bytes` + `_apply_logo_watermark` in server.py)
+- ✅ **Auth + tenant isolation** on `/ads/{id}/download/image`, `/ads/{id}/download/video`, `/ads/{id}/publish` — all now require `Depends(get_current_user)` and filter by `owner_id` for non-admins.
+- ✅ **`owner_id` field added to `Ad` pydantic model** (previously dropped by `extra="ignore"`).
+- ✅ **Per-website Meta credentials preferred** in `publish_ad` over legacy global `meta_settings` collection.
+- ✅ Backend testing iter-4: 14/14 pytest cases passed — auth, tenant isolation, watermark, publish-gate, variant flow, public lead capture.
+
 ## Personas
 - Primary: collegeop.com owner / small marketing team. Needs daily fresh ads, posts manually to IG/FB.
 - Secondary: Any small Indian SaaS / D2C brand wanting AI ad generation.
