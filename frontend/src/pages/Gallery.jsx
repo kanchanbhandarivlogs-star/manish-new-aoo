@@ -112,8 +112,11 @@ const VideoPreview = ({ ad }) => {
         );
     }
     return (
-        <div className="mt-2 p-6 border-2 border-black bg-red-200 text-center text-sm font-bold">
-            Video failed
+        <div className="mt-2 p-6 border-2 border-black bg-red-200 text-center text-sm font-bold" data-testid="video-failed">
+            <p>Video generation failed</p>
+            {ad.video_error && (
+                <p className="text-xs font-medium mt-2 text-red-900 whitespace-pre-wrap">{ad.video_error}</p>
+            )}
         </div>
     );
 };

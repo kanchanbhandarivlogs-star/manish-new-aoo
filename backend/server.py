@@ -217,6 +217,7 @@ class Ad(BaseModel):
     image_path: Optional[str] = None
     video_path: Optional[str] = None
     video_status: Literal["none", "pending", "ready", "failed"] = "none"
+    video_error: Optional[str] = None
     status: Literal["draft", "approved", "downloaded"] = "draft"
     published_to: List[str] = []
     parent_ad_id: Optional[str] = None
@@ -642,12 +643,24 @@ async def _video_task(ad_id: str, prompt: str, duration: int, size: str) -> None
         )
         await db.ads.update_one(
             {"id": ad_id},
-            {"$set": {"video_path": rel_path, "video_status": "ready"}},
+            {"$set": {"video_path": rel_path, "video_status": "ready", "video_error": None}},
         )
         logger.info(f"Video ready for ad {ad_id}")
-    except Exception:  # noqa: BLE001
+    except Exception as e:  # noqa: BLE001
         logger.exception(f"Video gen failed for {ad_id}")
-        await db.ads.update_one({"id": ad_id}, {"$set": {"video_status": "failed"}})
+        err_msg = str(e)
+        if "Budget has been exceeded" in err_msg or "budget" in err_msg.lower():
+            friendly = "AI provider budget exceeded. Please top-up your Emergent Universal Key."
+        elif "rate limit" in err_msg.lower() or "429" in err_msg:
+            friendly = "AI provider rate-limited. Try again in a few minutes."
+        elif "No video bytes" in err_msg:
+            friendly = "Sora 2 returned no video. Try a simpler prompt or top-up your key."
+        else:
+            friendly = err_msg[:200]
+        await db.ads.update_one(
+            {"id": ad_id},
+            {"$set": {"video_status": "failed", "video_error": friendly}},
+        )
 
 
 # ---------------------- ROUTES: ADS ----------------------
