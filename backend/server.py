@@ -325,6 +325,24 @@ def _website_logo_fs_path(logo_rel_path: Optional[str]) -> Optional[Path]:
     return abs_path if abs_path.exists() else None
 
 
+# Visual prompts that strictly forbid the model from rendering any text/logo inside
+# the artwork. We overlay the real brand logo afterwards via Pillow / ffmpeg, so the
+# model spending tokens on (often-wrong) typography or fake logos is pure waste.
+_NO_TEXT_IMAGE_SUFFIX = (
+    " STRICT RULES: Do NOT render any text, words, letters, numbers, captions, "
+    "logos, brand names, watermarks, signs, or signage anywhere in the image. "
+    "Pure photographic / illustrative scene only. Keep the bottom-right corner "
+    "visually quiet — no important subject, no faces, no busy detail there."
+)
+
+_NO_TEXT_VIDEO_SUFFIX = (
+    " STRICT RULES: NO on-screen text, NO captions, NO subtitles, NO logos, "
+    "NO brand names, NO watermarks, NO signage. Keep the bottom-right region of "
+    "every frame visually clean (no faces, no key motion) so a brand badge can be "
+    "overlaid there post-production."
+)
+
+
 async def _generate_image_to_file(
     prompt: str,
     ad_id: str,
@@ -339,11 +357,16 @@ async def _generate_image_to_file(
     chat = LlmChat(
         api_key=api_key,
         session_id=str(uuid.uuid4()),
-        system_message="You are a professional advertising creative director.",
+        system_message=(
+            "You generate pure photographic / illustrative ad imagery. "
+            "Never render text, logos, or branding inside the image — the brand "
+            "logo is composited afterwards."
+        ),
     ).with_model("gemini", "gemini-3.1-flash-image-preview").with_params(
         modalities=["image", "text"]
     )
-    _, images = await _safe_image_call(chat, prompt)
+    safe_prompt = prompt.rstrip() + _NO_TEXT_IMAGE_SUFFIX
+    _, images = await _safe_image_call(chat, safe_prompt)
     if not images:
         raise RuntimeError("No image returned")
     image_bytes = base64.b64decode(images[0]["data"])
@@ -385,8 +408,9 @@ def _generate_video_to_file(
 
     api_key = os.environ["EMERGENT_LLM_KEY"]
     video_gen = OpenAIVideoGeneration(api_key=api_key)
+    safe_prompt = prompt.rstrip() + _NO_TEXT_VIDEO_SUFFIX
     video_bytes = video_gen.text_to_video(
-        prompt=prompt,
+        prompt=safe_prompt,
         model="sora-2",
         size=size,
         duration=duration,
@@ -460,8 +484,8 @@ Return STRICT JSON with these keys and nothing else:
 {{
   "caption": "<2-4 line Instagram caption in Hinglish, with 3-5 fitting emojis, persuasive, ends with a soft CTA>",
   "hashtags": ["#tag1", "#tag2", "..."],
-  "image_prompt": "<Detailed visual prompt for an AI image model. Square/portrait ad banner. Mention subject, lighting, mood, composition, color palette, typography hints.>",
-  "video_prompt": "<Short 4-8 second cinematic shot description for a video ad model.>"
+  "image_prompt": "<Detailed visual prompt for an AI image model. Square/portrait ad photo. Describe subject, lighting, mood, composition, color palette. IMPORTANT: NO text, NO typography, NO logos, NO brand names, NO watermarks rendered inside the image — pure photographic / illustrative scene only. The brand logo will be added separately afterwards as a clean overlay.>",
+  "video_prompt": "<Short 4-second cinematic shot description for a video ad model. IMPORTANT: NO on-screen text, NO captions, NO logos, NO brand names — pure motion / scene only. Keep the bottom-right area visually clean (no text, no faces, no key action) so a brand badge can be overlaid there without obstruction.>"
 }}"""
 
 
