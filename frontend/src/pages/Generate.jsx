@@ -123,9 +123,8 @@ const VideoOptions = ({ duration, setDuration, size, setSize }) => (
                 onChange={(e) => setSize(e.target.value)}
                 data-testid="video-size-select"
             >
-                <option value="1024x1792">Portrait (Reels)</option>
-                <option value="1280x720">Landscape (YouTube)</option>
-                <option value="1024x1024">Square (Feed)</option>
+                <option value="720x1280">Portrait 9:16 (Reels / Stories)</option>
+                <option value="1280x720">Landscape 16:9 (YouTube)</option>
             </select>
         </div>
     </div>
@@ -247,7 +246,7 @@ const Generate = () => {
     const [includeImage, setIncludeImage] = useState(true);
     const [includeVideo, setIncludeVideo] = useState(false);
     const [videoDuration, setVideoDuration] = useState(4);
-    const [videoSize, setVideoSize] = useState("1024x1792");
+    const [videoSize, setVideoSize] = useState("720x1280");
 
     const { scraping, generating, progressStep, handleScrape, handleGenerate } =
         useAdGeneration({ websites, navigate });

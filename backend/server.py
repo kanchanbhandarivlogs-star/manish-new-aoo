@@ -196,7 +196,8 @@ class GenerateRequest(BaseModel):
     include_image: bool = True
     include_video: bool = False
     video_duration: Literal[4, 8, 12] = 4
-    video_size: Literal["1280x720", "1024x1024", "1024x1792", "1792x1024"] = "1024x1792"
+    # sora-2 supports only 720x1280 (vertical) and 1280x720 (landscape). Vertical default for Reels/Stories.
+    video_size: Literal["720x1280", "1280x720"] = "720x1280"
 
 
 class ScrapeRequest(BaseModel):
@@ -355,10 +356,17 @@ async def _safe_image_call(chat, prompt: str):
 
 
 def _generate_video_to_file(
-    prompt: str, ad_id: str, duration: int = 4, size: str = "1024x1792"
+    prompt: str, ad_id: str, duration: int = 4, size: str = "720x1280"
 ) -> str:
     """Generate video via Sora 2 (sync) and save to disk."""
     from emergentintegrations.llm.openai.video_generation import OpenAIVideoGeneration
+
+    # Patch the library's local SIZES allowlist to include 720x1280 — the API supports it
+    # for sora-2 (vertical Reels) but the library's pre-flight validation omits it.
+    if "720x1280" not in OpenAIVideoGeneration.SIZES:
+        OpenAIVideoGeneration.SIZES = dict(
+            OpenAIVideoGeneration.SIZES, **{"720x1280": {"width": 720, "height": 1280}}
+        )
 
     api_key = os.environ["EMERGENT_LLM_KEY"]
     video_gen = OpenAIVideoGeneration(api_key=api_key)
