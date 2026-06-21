@@ -172,20 +172,38 @@ def _compose_badge(logo_img, text: str, font, base_size: Tuple[int, int]):
 
 
 def apply_logo_watermark(
-    image_path: Path, website_url: Optional[str], brand_text: Optional[str] = None
+    image_path: Path,
+    website_url: Optional[str],
+    brand_text: Optional[str] = None,
+    logo_file_path: Optional[Path] = None,
 ) -> None:
-    """Composite the website's logo (and optional brand text) onto the bottom-right of the ad."""
-    if not website_url and not brand_text:
+    """Composite the website's logo (and optional brand text) onto the bottom-right of the ad.
+    Priority for the logo source:
+        1) `logo_file_path` (user-uploaded HD logo) — highest quality
+        2) Auto-fetched favicon/icon from `website_url`
+        3) Text-only brand badge using `brand_text`
+    """
+    if not (website_url or brand_text or logo_file_path):
         return
     try:
         from PIL import Image
 
         base = Image.open(image_path).convert("RGBA")
         logo_img = None
-        if website_url:
+
+        # 1) User-uploaded logo (preferred)
+        if logo_file_path and Path(logo_file_path).exists():
+            try:
+                logo_img = Image.open(logo_file_path).convert("RGBA")
+            except Exception:  # noqa: BLE001
+                logo_img = None
+
+        # 2) Fallback to auto-fetched favicon
+        if logo_img is None and website_url:
             logo_img = _load_logo_image(fetch_website_logo_bytes(website_url))
-            if logo_img is not None:
-                logo_img = _resize_logo(logo_img, base.size)
+
+        if logo_img is not None:
+            logo_img = _resize_logo(logo_img, base.size)
 
         text = (brand_text or "").strip()
         font = _load_brand_font(base.size) if text else None
@@ -195,8 +213,47 @@ def apply_logo_watermark(
             return
 
         margin = max(16, int(min(base.size) * 0.025))
+        # Bottom-right placement (safest — Sora/Nano-Banana rarely render copy in this corner)
         pos = (base.size[0] - badge.size[0] - margin, base.size[1] - badge.size[1] - margin)
         base.alpha_composite(badge, dest=pos)
         base.convert("RGB").save(image_path, format="PNG")
     except Exception:  # noqa: BLE001
         logger.exception("Watermark failed for %s", website_url)
+
+
+def build_video_watermark_overlay(
+    website_url: Optional[str],
+    brand_text: Optional[str],
+    logo_file_path: Optional[Path],
+    out_png_path: Path,
+) -> Optional[Tuple[int, int]]:
+    """Render a single watermark badge PNG (logo + optional brand text) and save it.
+
+    Returns the (width, height) of the rendered badge so the caller can compute the
+    correct ffmpeg overlay position. Returns None if no logo/text could be sourced.
+    """
+    from PIL import Image
+
+    logo_img = None
+    if logo_file_path and Path(logo_file_path).exists():
+        try:
+            logo_img = Image.open(logo_file_path).convert("RGBA")
+        except Exception:  # noqa: BLE001
+            logo_img = None
+    if logo_img is None and website_url:
+        logo_img = _load_logo_image(fetch_website_logo_bytes(website_url))
+
+    # Size the logo using a fixed reference (720x1280 portrait — Sora 2 default)
+    # so the badge looks consistent regardless of the real video dimensions; ffmpeg
+    # will scale it via the overlay filter if needed.
+    base_size = (720, 1280)
+    if logo_img is not None:
+        logo_img = _resize_logo(logo_img, base_size)
+
+    text = (brand_text or "").strip()
+    font = _load_brand_font(base_size) if text else None
+    badge = _compose_badge(logo_img, text, font, base_size)
+    if badge is None:
+        return None
+    badge.save(out_png_path, format="PNG")
+    return badge.size

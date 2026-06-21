@@ -1,8 +1,105 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { apiClient } from "@/lib/api";
 import { useWebsiteCrud } from "@/hooks/useWebsiteCrud";
-import { Plus, Trash2, Pencil, Globe, X, Check, Zap, Link as LinkIcon, Copy } from "lucide-react";
+import { Plus, Trash2, Pencil, Globe, X, Check, Zap, Link as LinkIcon, Copy, Upload, Image as ImageIcon } from "lucide-react";
 import { toast } from "sonner";
+
+const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
+const mediaUrl = (relPath) => `${BACKEND_URL}/api/media/${relPath}`;
+
+const LogoUploader = ({ website, onUpdated }) => {
+    const inputRef = useRef(null);
+    const [busy, setBusy] = useState(false);
+
+    const handleSelect = async (e) => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+        if (file.size > 5 * 1024 * 1024) {
+            toast.error("Logo must be under 5 MB");
+            return;
+        }
+        setBusy(true);
+        try {
+            const fd = new FormData();
+            fd.append("file", file);
+            await apiClient.post(`/websites/${website.id}/logo`, fd, {
+                headers: { "Content-Type": "multipart/form-data" },
+            });
+            toast.success("Logo uploaded — will appear on all new ads");
+            onUpdated?.();
+        } catch (err) {
+            toast.error(err.response?.data?.detail || "Logo upload failed");
+        } finally {
+            setBusy(false);
+            if (inputRef.current) inputRef.current.value = "";
+        }
+    };
+
+    const handleDelete = async () => {
+        if (!window.confirm("Remove the brand logo? Ads will fall back to favicon.")) return;
+        try {
+            await apiClient.delete(`/websites/${website.id}/logo`);
+            toast.success("Logo removed");
+            onUpdated?.();
+        } catch (err) {
+            toast.error(err.response?.data?.detail || "Could not remove logo");
+        }
+    };
+
+    return (
+        <div className="mt-3 p-2 border-2 border-black bg-white/80" data-testid={`logo-uploader-${website.id}`}>
+            <p className="text-[0.65rem] font-bold uppercase tracking-wider flex items-center gap-1">
+                <ImageIcon size={10} strokeWidth={3} /> Brand logo (used on ads & videos)
+            </p>
+            <div className="flex items-center gap-2 mt-2">
+                {website.logo_path ? (
+                    <img
+                        src={mediaUrl(website.logo_path)}
+                        alt="logo"
+                        className="w-12 h-12 object-contain border-2 border-black bg-white"
+                        data-testid={`logo-preview-${website.id}`}
+                    />
+                ) : (
+                    <div className="w-12 h-12 border-2 border-dashed border-black bg-[#F3F4F6] flex items-center justify-center text-[0.6rem] text-center px-1">
+                        No logo
+                    </div>
+                )}
+                <input
+                    ref={inputRef}
+                    type="file"
+                    accept="image/png,image/jpeg,image/webp,image/svg+xml"
+                    onChange={handleSelect}
+                    className="hidden"
+                    data-testid={`logo-input-${website.id}`}
+                />
+                <button
+                    type="button"
+                    className="nb-btn !p-2 !shadow-[2px_2px_0_0_#000] flex-1"
+                    onClick={() => inputRef.current?.click()}
+                    disabled={busy}
+                    data-testid={`logo-upload-btn-${website.id}`}
+                >
+                    {busy ? <div className="nb-spinner" /> : <Upload size={14} strokeWidth={2.5} />}
+                    <span className="text-xs font-bold uppercase">
+                        {busy ? "Uploading…" : website.logo_path ? "Replace" : "Upload HD logo"}
+                    </span>
+                </button>
+                {website.logo_path && (
+                    <button
+                        type="button"
+                        className="nb-btn nb-btn-danger !p-2 !shadow-[2px_2px_0_0_#000]"
+                        onClick={handleDelete}
+                        disabled={busy}
+                        data-testid={`logo-delete-btn-${website.id}`}
+                        title="Remove logo"
+                    >
+                        <Trash2 size={14} />
+                    </button>
+                )}
+            </div>
+        </div>
+    );
+};
 
 const emptyForm = {
     name: "", url: "", description: "",
@@ -199,7 +296,7 @@ const WebsiteForm = ({ editingId, form, setForm, submitting, onSubmit, onClose }
     </div>
 );
 
-const WebsiteCard = ({ website, color, onEdit, onDelete }) => (
+const WebsiteCard = ({ website, color, onEdit, onDelete, onChanged }) => (
     <div className={`nb-card nb-card-hover p-6 ${color}`} data-testid={`website-card-${website.id}`}>
         <div className="flex items-start justify-between">
             <div className="w-10 h-10 bg-white border-2 border-black flex items-center justify-center">
@@ -240,6 +337,7 @@ const WebsiteCard = ({ website, color, onEdit, onDelete }) => (
                 <Zap size={10} strokeWidth={3} /> Auto-gen ON
             </span>
         )}
+        <LogoUploader website={website} onUpdated={onChanged} />
         <div className="mt-3 p-2 border-2 border-black bg-white/80" data-testid={`apply-link-${website.id}`}>
             <p className="text-[0.65rem] font-bold uppercase tracking-wider flex items-center gap-1">
                 <LinkIcon size={10} strokeWidth={3} /> Apply Now Link
@@ -262,7 +360,7 @@ const WebsiteCard = ({ website, color, onEdit, onDelete }) => (
     </div>
 );
 
-const renderWebsiteContent = (loading, websites, onEdit, onDelete) => {
+const renderWebsiteContent = (loading, websites, onEdit, onDelete, onChanged) => {
     if (loading) {
         return (
             <div className="nb-card p-10 text-center">
@@ -290,6 +388,7 @@ const renderWebsiteContent = (loading, websites, onEdit, onDelete) => {
                     color={CARD_COLORS[idx % CARD_COLORS.length]}
                     onEdit={() => onEdit(w)}
                     onDelete={() => onDelete(w.id)}
+                    onChanged={onChanged}
                 />
             ))}
         </div>
@@ -389,7 +488,7 @@ const Websites = () => {
                     onClose={reset}
                 />
             )}
-            {renderWebsiteContent(loading, websites, startEdit, remove)}
+            {renderWebsiteContent(loading, websites, startEdit, remove, load)}
         </div>
     );
 };

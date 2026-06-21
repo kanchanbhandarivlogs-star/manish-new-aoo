@@ -15,7 +15,7 @@ from typing import Any, Dict, List, Literal, Optional
 import requests
 from bs4 import BeautifulSoup
 from dotenv import load_dotenv
-from fastapi import APIRouter, BackgroundTasks, Depends, FastAPI, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, FastAPI, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from motor.motor_asyncio import AsyncIOMotorClient
@@ -43,8 +43,10 @@ load_dotenv(ROOT_DIR / ".env")
 MEDIA_DIR = ROOT_DIR / "generated_media"
 IMAGES_DIR = MEDIA_DIR / "images"
 VIDEOS_DIR = MEDIA_DIR / "videos"
+LOGOS_DIR = MEDIA_DIR / "logos"
 IMAGES_DIR.mkdir(parents=True, exist_ok=True)
 VIDEOS_DIR.mkdir(parents=True, exist_ok=True)
+LOGOS_DIR.mkdir(parents=True, exist_ok=True)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -153,6 +155,7 @@ class Website(BaseModel):
     telegram_chat_id: Optional[str] = ""
     auto_generate: bool = False
     last_auto_run_at: Optional[str] = None
+    logo_path: Optional[str] = None  # relative path under /generated_media (e.g. logos/{id}.png)
     created_at: str = Field(default_factory=now_iso)
 
 
@@ -304,11 +307,22 @@ def _fetch_website_logo_bytes(website_url: str) -> Optional[bytes]:
 
 
 def _apply_logo_watermark(
-    image_path: Path, website_url: Optional[str], brand_text: Optional[str] = None
+    image_path: Path,
+    website_url: Optional[str],
+    brand_text: Optional[str] = None,
+    logo_file_path: Optional[Path] = None,
 ) -> None:
     """Backward-compatible thin wrapper kept for legacy callers/tests."""
     from services.watermark import apply_logo_watermark
-    apply_logo_watermark(image_path, website_url, brand_text)
+    apply_logo_watermark(image_path, website_url, brand_text, logo_file_path)
+
+
+def _website_logo_fs_path(logo_rel_path: Optional[str]) -> Optional[Path]:
+    """Resolve a website's stored logo_path (relative) to an absolute filesystem Path."""
+    if not logo_rel_path:
+        return None
+    abs_path = MEDIA_DIR / logo_rel_path
+    return abs_path if abs_path.exists() else None
 
 
 async def _generate_image_to_file(
@@ -316,6 +330,7 @@ async def _generate_image_to_file(
     ad_id: str,
     website_url: Optional[str] = None,
     brand_text: Optional[str] = None,
+    logo_file_path: Optional[Path] = None,
 ) -> str:
     """Generate image with Nano Banana, save to disk, watermark, return relative path."""
     from emergentintegrations.llm.chat import LlmChat, UserMessage
@@ -335,7 +350,7 @@ async def _generate_image_to_file(
     out_path = IMAGES_DIR / f"{ad_id}.png"
     out_path.write_bytes(image_bytes)
     # Overlay the website's logo + brand name as a watermark (bottom-right)
-    _apply_logo_watermark(out_path, website_url, brand_text)
+    _apply_logo_watermark(out_path, website_url, brand_text, logo_file_path)
     return f"images/{ad_id}.png"
 
 
@@ -566,6 +581,64 @@ async def delete_website(wid: str, user=Depends(get_current_user)) -> Dict[str, 
     return {"ok": True}
 
 
+@api_router.post("/websites/{wid}/logo")
+async def upload_website_logo(
+    wid: str,
+    file: UploadFile = File(...),
+    user=Depends(get_current_user),
+) -> Dict[str, Any]:
+    """Upload an HD brand logo (PNG/JPG/SVG/WEBP) for a website.
+    The logo is used as the watermark on every generated image AND video.
+    """
+    q: Dict[str, Any] = {"id": wid}
+    if user["role"] != "admin":
+        q["owner_id"] = user["id"]
+    site = await db.websites.find_one(q, {"_id": 0})
+    if not site:
+        raise HTTPException(404, "Website not found")
+
+    # Validate content type
+    content = await file.read()
+    if not content or len(content) > 5 * 1024 * 1024:
+        raise HTTPException(400, "Logo file is empty or larger than 5 MB.")
+    ctype = (file.content_type or "").lower()
+    if not any(t in ctype for t in ("image/png", "image/jpeg", "image/jpg", "image/webp", "image/svg")):
+        raise HTTPException(400, "Logo must be PNG, JPG, WEBP, or SVG.")
+
+    # Re-encode to a normalised PNG so downstream watermarking (PIL + ffmpeg) is always uniform.
+    out_path = LOGOS_DIR / f"{wid}.png"
+    try:
+        from io import BytesIO
+
+        from PIL import Image
+
+        img = Image.open(BytesIO(content)).convert("RGBA")
+        img.save(out_path, format="PNG")
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(400, f"Could not process logo image: {e}")
+
+    rel = f"logos/{wid}.png"
+    await db.websites.update_one({"id": wid}, {"$set": {"logo_path": rel}})
+    return {"ok": True, "logo_path": rel}
+
+
+@api_router.delete("/websites/{wid}/logo")
+async def delete_website_logo(wid: str, user=Depends(get_current_user)) -> Dict[str, bool]:
+    q: Dict[str, Any] = {"id": wid}
+    if user["role"] != "admin":
+        q["owner_id"] = user["id"]
+    site = await db.websites.find_one(q, {"_id": 0})
+    if not site:
+        raise HTTPException(404, "Website not found")
+    if site.get("logo_path"):
+        try:
+            (MEDIA_DIR / site["logo_path"]).unlink(missing_ok=True)
+        except OSError:
+            pass
+    await db.websites.update_one({"id": wid}, {"$set": {"logo_path": None}})
+    return {"ok": True}
+
+
 # ---------------------- ROUTES: SCRAPE ----------------------
 @api_router.post("/scrape")
 async def scrape(payload: ScrapeRequest, user=Depends(get_current_user)) -> Dict[str, str]:
@@ -617,6 +690,7 @@ async def generate_ad(
         video_status="pending" if payload.include_video else "none",
     )
 
+    logo_fs_path = _website_logo_fs_path(site.get("logo_path") if site else None)
     if payload.include_image and ad.image_prompt:
         try:
             ad.image_path = await _generate_image_to_file(
@@ -624,6 +698,7 @@ async def generate_ad(
                 ad_id,
                 site.get("url") if site else None,
                 website_name,
+                logo_fs_path,
             )
         except Exception as e:  # noqa: BLE001
             logger.exception("Image gen failed")
@@ -638,17 +713,42 @@ async def generate_ad(
             ad.video_prompt,
             payload.video_duration,
             payload.video_size,
+            site.get("url") if site else None,
+            website_name,
+            str(logo_fs_path) if logo_fs_path else None,
         )
     return ad
 
 
-async def _video_task(ad_id: str, prompt: str, duration: int, size: str) -> None:
-    """Background task: generate video, update ad doc."""
+async def _video_task(
+    ad_id: str,
+    prompt: str,
+    duration: int,
+    size: str,
+    website_url: Optional[str] = None,
+    brand_text: Optional[str] = None,
+    logo_file_path: Optional[str] = None,
+) -> None:
+    """Background task: generate video, watermark it, then update ad doc."""
     try:
         loop = asyncio.get_event_loop()
         rel_path = await loop.run_in_executor(
             None, _generate_video_to_file, prompt, ad_id, duration, size
         )
+        # Overlay brand logo + name onto the generated video (bottom-right).
+        try:
+            from services.video_watermark import apply_video_watermark
+            abs_video = MEDIA_DIR / rel_path
+            await loop.run_in_executor(
+                None,
+                apply_video_watermark,
+                abs_video,
+                website_url,
+                brand_text,
+                Path(logo_file_path) if logo_file_path else None,
+            )
+        except Exception:  # noqa: BLE001
+            logger.exception(f"Video watermark failed for {ad_id} — keeping un-watermarked video")
         await db.ads.update_one(
             {"id": ad_id},
             {"$set": {"video_path": rel_path, "video_status": "ready", "video_error": None}},
@@ -1024,6 +1124,7 @@ async def create_variant(ad_id: str, user=Depends(get_current_user)) -> Ad:
                 new_id,
                 site.get("url") if site else None,
                 parent.get("website_name"),
+                _website_logo_fs_path(site.get("logo_path") if site else None),
             )
         except Exception as e:  # noqa: BLE001
             logger.exception("Variant image gen failed")
@@ -1082,7 +1183,11 @@ async def _auto_generate_for_website(site: Dict[str, Any]) -> None:
         )
         if ad.image_prompt:
             ad.image_path = await _generate_image_to_file(
-                ad.image_prompt, new_id, site.get("url"), site.get("name")
+                ad.image_prompt,
+                new_id,
+                site.get("url"),
+                site.get("name"),
+                _website_logo_fs_path(site.get("logo_path")),
             )
         await db.ads.insert_one(ad.model_dump())
         await db.websites.update_one(
