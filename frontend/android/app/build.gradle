@@ -24,6 +24,15 @@ android {
     }
 }
 
+// Force androidx.core to a SDK-36-compatible version (1.19.0+ requires SDK 37 which
+// many users do not have installed yet).  Capacitor 7 pulls 1.19.0 transitively.
+configurations.all {
+    resolutionStrategy {
+        force "androidx.core:core:${rootProject.ext.androidxCoreVersion}"
+        force "androidx.core:core-ktx:${rootProject.ext.androidxCoreVersion}"
+    }
+}
+
 repositories {
     flatDir{
         dirs '../capacitor-cordova-android-plugins/src/main/libs', 'libs'
