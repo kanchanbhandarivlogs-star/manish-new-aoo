@@ -3,6 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "dependencies": {
+    "@capacitor/android": "^7",
+    "@capacitor/cli": "^7",
+    "@capacitor/core": "^7",
     "@hookform/resolvers": "5.0.1",
     "@radix-ui/react-accordion": "1.2.8",
     "@radix-ui/react-alert-dialog": "1.1.11",
@@ -63,7 +66,10 @@
   "scripts": {
     "start": "craco start",
     "build": "craco build",
-    "test": "craco test"
+    "test": "craco test",
+    "apk:build": "craco build && cap sync android",
+    "apk:open": "cap open android",
+    "apk:dev": "craco build && cap sync android && cap open android"
   },
   "browserslist": {
     "production": [
@@ -113,14 +119,13 @@
     "serialize-javascript": "7.0.5",
     "uuid": "11.1.1",
     "@tootallnate/once": "2.0.1",
-    "webpack-dev-server": "5.2.4",
+    "webpack-dev-server": "4.15.2",
     "resolve-url-loader": "5.0.0",
     "**/resolve-url-loader/postcss": "8.5.10",
     "**/axios/form-data": "4.0.4",
     "**/jsdom/form-data": "3.0.4",
     "**/postcss-svgo/svgo": "2.8.1",
     "**/webpack-dev-server/ws": "8.20.1",
-    "webpack-dev-server": "4.15.2",
     "**/postcss-load-config/yaml": "2.8.3",
     "**/cosmiconfig/yaml": "1.10.3",
     "**/cssnano/yaml": "1.10.3",

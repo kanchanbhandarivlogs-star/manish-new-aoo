@@ -1,0 +1,12 @@
+{
+  "appId": "com.collegeop.adsstudio",
+  "appName": "Ads Studio",
+  "webDir": "build",
+  "server": {
+    "androidScheme": "https",
+    "cleartext": true
+  },
+  "android": {
+    "allowMixedContent": true
+  }
+}

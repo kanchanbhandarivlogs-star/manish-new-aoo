@@ -11,6 +11,13 @@
 # production
 /build
 
+# Capacitor / Android build artifacts (keep source, ignore build outputs)
+/android/.gradle/
+/android/build/
+/android/app/build/
+/android/local.properties
+/android/capacitor-cordova-android-plugins/
+
 # misc
 .DS_Store
 .env.local
