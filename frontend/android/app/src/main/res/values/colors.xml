@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Ads Studio brand palette (neo-brutalist yellow + black) -->
+    <color name="colorPrimary">#FFEB00</color>
+    <color name="colorPrimaryDark">#000000</color>
+    <color name="colorAccent">#FFEB00</color>
+</resources>
