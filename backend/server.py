@@ -325,6 +325,25 @@ def _website_logo_fs_path(logo_rel_path: Optional[str]) -> Optional[Path]:
     return abs_path if abs_path.exists() else None
 
 
+# Visual prompt suffixes: text, headlines, typography are ALLOWED (they make ads
+# pop). What we explicitly forbid is the model rendering any LOGO / brand-mark /
+# company name — those are imprecise (fake logos look bad) and we overlay the
+# user's uploaded HD logo afterwards via Pillow / ffmpeg anyway.
+_NO_LOGO_IMAGE_SUFFIX = (
+    " IMPORTANT: Do NOT render any logos, brand marks, company names, or fake "
+    "brand insignias inside the image. Headlines, body text, and typography are "
+    "welcome. Keep the bottom-right corner visually quiet (no key subject, no "
+    "important text there) so a brand logo can be overlaid post-production."
+)
+
+_NO_LOGO_VIDEO_SUFFIX = (
+    " IMPORTANT: Do NOT render any logos, brand marks, fake company names, or "
+    "brand insignias on screen. On-screen text, captions and headlines are fine. "
+    "Keep the bottom-right region of every frame visually quiet so a brand logo "
+    "can be overlaid post-production."
+)
+
+
 async def _generate_image_to_file(
     prompt: str,
     ad_id: str,
@@ -343,7 +362,8 @@ async def _generate_image_to_file(
     ).with_model("gemini", "gemini-3.1-flash-image-preview").with_params(
         modalities=["image", "text"]
     )
-    _, images = await _safe_image_call(chat, prompt)
+    safe_prompt = prompt.rstrip() + _NO_LOGO_IMAGE_SUFFIX
+    _, images = await _safe_image_call(chat, safe_prompt)
     if not images:
         raise RuntimeError("No image returned")
     image_bytes = base64.b64decode(images[0]["data"])
@@ -386,8 +406,9 @@ def _generate_video_to_file(
 
     api_key = os.environ["EMERGENT_LLM_KEY"]
     video_gen = OpenAIVideoGeneration(api_key=api_key)
+    safe_prompt = prompt.rstrip() + _NO_LOGO_VIDEO_SUFFIX
     video_bytes = video_gen.text_to_video(
-        prompt=prompt,
+        prompt=safe_prompt,
         model="sora-2",
         size=size,
         duration=duration,
@@ -461,8 +482,8 @@ Return STRICT JSON with these keys and nothing else:
 {{
   "caption": "<2-4 line Instagram caption in Hinglish, with 3-5 fitting emojis, persuasive, ends with a soft CTA>",
   "hashtags": ["#tag1", "#tag2", "..."],
-  "image_prompt": "<Detailed visual prompt for an AI image model. Square/portrait ad banner. Mention subject, lighting, mood, composition, color palette, typography hints.>",
-  "video_prompt": "<Short 4-8 second cinematic shot description for a video ad model.>"
+  "image_prompt": "<Detailed visual prompt for an AI image model. Square/portrait ad banner. Mention subject, lighting, mood, composition, color palette, typography / headline hints. Do NOT instruct the model to render any logos or brand marks — the real brand logo is overlaid afterwards.>",
+  "video_prompt": "<Short 4-8 second cinematic shot description for a video ad model. On-screen headline text is allowed, but do NOT instruct the model to render any logos or brand marks.>"
 }}"""
 
 
