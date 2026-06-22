@@ -1,6 +1,25 @@
 import { useCallback } from "react";
 import { apiClient } from "@/lib/api";
 import { toast } from "sonner";
+import { Capacitor } from "@capacitor/core";
+import { Directory, Filesystem } from "@capacitor/filesystem";
+
+/**
+ * Convert an ArrayBuffer / Blob payload into a base64 string suitable for
+ * `Filesystem.writeFile()`. Used only inside the Capacitor (Android APK) runtime.
+ */
+const blobToBase64 = (blob) =>
+    new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onloadend = () => {
+            // strip "data:*/*;base64," prefix
+            const result = reader.result;
+            const idx = result.indexOf(",");
+            resolve(idx >= 0 ? result.slice(idx + 1) : result);
+        };
+        reader.onerror = reject;
+        reader.readAsDataURL(blob);
+    });
 
 /**
  * Hook returning ad-mutation actions that the gallery & detail modal can call.
@@ -30,20 +49,38 @@ export const useAdActions = ({ onChanged, onDeleted } = {}) => {
     }, [onChanged, onDeleted]);
 
     const downloadFile = useCallback(async (id, kind) => {
+        const filename = `ad-${id}.${kind === "image" ? "png" : "mp4"}`;
         try {
             const res = await apiClient.get(`/ads/${id}/download/${kind}`, { responseType: "blob" });
+
+            // ─── Android / iOS APK: save into the phone's public Downloads folder ───
+            if (Capacitor.isNativePlatform()) {
+                const base64 = await blobToBase64(res.data);
+                await Filesystem.writeFile({
+                    path: `Download/${filename}`,
+                    data: base64,
+                    directory: Directory.ExternalStorage,
+                    recursive: true,
+                });
+                toast.success(`Saved to phone Downloads: ${filename}`);
+                onChanged?.();
+                return;
+            }
+
+            // ─── Web browser fallback: anchor + blob URL ───
             const url = window.URL.createObjectURL(new Blob([res.data]));
             const a = document.createElement("a");
             a.href = url;
-            a.download = `ad-${id}.${kind === "image" ? "png" : "mp4"}`;
+            a.download = filename;
             document.body.appendChild(a);
             a.click();
             a.remove();
             window.URL.revokeObjectURL(url);
             toast.success(`Downloaded ${kind}`);
             onChanged?.();
-        } catch {
-            toast.error("Download failed");
+        } catch (err) {
+            console.error("Download failed", err);
+            toast.error(err?.message || "Download failed");
         }
     }, [onChanged]);
 
