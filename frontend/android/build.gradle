@@ -24,6 +24,20 @@ allprojects {
     }
 }
 
+// Force every module (app, capacitor-android, plugin libs) to use
+// androidx.core 1.13.1 — newer versions (1.19.x) require compileSdk 37.
+subprojects {
+    configurations.all {
+        resolutionStrategy.eachDependency { details ->
+            if (details.requested.group == 'androidx.core' &&
+                (details.requested.name == 'core' || details.requested.name == 'core-ktx')) {
+                details.useVersion '1.13.1'
+                details.because 'Pinning androidx.core to a version that supports compileSdk 36'
+            }
+        }
+    }
+}
+
 task clean(type: Delete) {
     delete rootProject.buildDir
 }
