@@ -3,7 +3,7 @@ import { useSearchParams } from "react-router-dom";
 import { apiClient, mediaUrl } from "@/lib/api";
 import { useAdActions } from "@/hooks/useAdActions";
 import {
-    Download, Trash2, CheckCircle2, Copy, ImagePlay, RefreshCw, X, Filter, Film,
+    Download, Share2, Trash2, CheckCircle2, Copy, ImagePlay, RefreshCw, X, Filter, Film,
     Send, Shuffle, Facebook, Instagram,
 } from "lucide-react";
 
@@ -201,13 +201,13 @@ const AdDetailModal = ({ ad, onClose, onApprove, onDownload, onDelete, onCopyCap
                     </button>
                 )}
                 {ad.image_path && (
-                    <button className="nb-btn nb-btn-primary" onClick={() => onDownload("image")} data-testid="download-image-btn">
-                        <Download size={16} strokeWidth={2.5} /> Download Image
+                    <button className="nb-btn nb-btn-primary" onClick={() => onDownload("image")} data-testid="share-image-btn">
+                        <Share2 size={16} strokeWidth={2.5} /> Share / Save Image
                     </button>
                 )}
                 {ad.video_status === "ready" && (
-                    <button className="nb-btn nb-btn-lavender" onClick={() => onDownload("video")} data-testid="download-video-btn">
-                        <Download size={16} strokeWidth={2.5} /> Download Video
+                    <button className="nb-btn nb-btn-lavender" onClick={() => onDownload("video")} data-testid="share-video-btn">
+                        <Share2 size={16} strokeWidth={2.5} /> Share / Save Video
                     </button>
                 )}
                 {ad.image_path && (

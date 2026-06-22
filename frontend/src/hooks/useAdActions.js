@@ -3,28 +3,35 @@ import { apiClient } from "@/lib/api";
 import { toast } from "sonner";
 import { Capacitor } from "@capacitor/core";
 import { Directory, Filesystem } from "@capacitor/filesystem";
+import { Share } from "@capacitor/share";
 
-/**
- * Convert an ArrayBuffer / Blob payload into a base64 string suitable for
- * `Filesystem.writeFile()`. Used only inside the Capacitor (Android APK) runtime.
- */
+/** ArrayBuffer / Blob → base64 string (for Filesystem.writeFile) */
 const blobToBase64 = (blob) =>
     new Promise((resolve, reject) => {
         const reader = new FileReader();
         reader.onloadend = () => {
-            // strip "data:*/*;base64," prefix
-            const result = reader.result;
-            const idx = result.indexOf(",");
-            resolve(idx >= 0 ? result.slice(idx + 1) : result);
+            const r = reader.result;
+            const i = r.indexOf(",");
+            resolve(i >= 0 ? r.slice(i + 1) : r);
         };
         reader.onerror = reject;
         reader.readAsDataURL(blob);
     });
 
-/**
- * Hook returning ad-mutation actions that the gallery & detail modal can call.
- * `onChanged` is invoked after any successful mutation so the caller can refetch.
- */
+/** Download a media file to phone cache (Capacitor only). Returns the local file URI. */
+const fetchToCache = async (mediaUrl, filename) => {
+    const res = await fetch(mediaUrl);
+    if (!res.ok) throw new Error(`Server returned ${res.status}`);
+    const blob = await res.blob();
+    const base64 = await blobToBase64(blob);
+    const written = await Filesystem.writeFile({
+        path: filename,
+        data: base64,
+        directory: Directory.Cache,
+    });
+    return written.uri;
+};
+
 export const useAdActions = ({ onChanged, onDeleted } = {}) => {
     const updateStatus = useCallback(async (id, newStatus) => {
         try {
@@ -48,7 +55,13 @@ export const useAdActions = ({ onChanged, onDeleted } = {}) => {
         }
     }, [onChanged, onDeleted]);
 
-    const downloadFile = useCallback(async (ad, kind) => {
+    /**
+     * Universal "share / download" action.
+     * - On Android APK: opens native share-sheet (WhatsApp, Save to Gallery, Drive, etc.)
+     *   with the actual image/video file attached.
+     * - In a web browser: triggers a normal download via the public media URL.
+     */
+    const shareOrDownload = useCallback(async (ad, kind) => {
         if (!ad) return;
         const id = ad.id;
         const ext = kind === "image" ? "png" : "mp4";
@@ -61,26 +74,23 @@ export const useAdActions = ({ onChanged, onDeleted } = {}) => {
         const mediaUrl = `${process.env.REACT_APP_BACKEND_URL}/api/media/${relPath}`;
 
         try {
-            // ─── Native (Android APK / iOS): save to phone's Download folder ───
             if (Capacitor.isNativePlatform()) {
-                const res = await fetch(mediaUrl);
-                if (!res.ok) throw new Error(`Server returned ${res.status}`);
-                const blob = await res.blob();
-                const base64 = await blobToBase64(blob);
-                await Filesystem.writeFile({
-                    path: `Download/${filename}`,
-                    data: base64,
-                    directory: Directory.ExternalStorage,
-                    recursive: true,
+                toast.loading("Preparing file…", { id: "share-prep" });
+                const localUri = await fetchToCache(mediaUrl, filename);
+                toast.dismiss("share-prep");
+                await Share.share({
+                    title: kind === "image" ? "Ad image" : "Ad video",
+                    text: (ad.caption || "Created with Ads Studio").slice(0, 240),
+                    url: localUri,
+                    dialogTitle: "Share or save",
                 });
-                // Tell the server we downloaded it (status update + media-scan trigger)
+                // Tell the server we downloaded it (status → downloaded)
                 apiClient.get(`/ads/${id}/download/${kind}`).catch(() => {});
-                toast.success(`Saved to Downloads: ${filename}`);
                 onChanged?.();
                 return;
             }
 
-            // ─── Web browser: anchor + direct media URL (no JWT needed, files are public) ───
+            // Web browser path — direct anchor download
             const a = document.createElement("a");
             a.href = mediaUrl;
             a.download = filename;
@@ -89,13 +99,12 @@ export const useAdActions = ({ onChanged, onDeleted } = {}) => {
             document.body.appendChild(a);
             a.click();
             a.remove();
-            // mark as downloaded server-side
             apiClient.get(`/ads/${id}/download/${kind}`).catch(() => {});
             toast.success(`Downloading ${kind}…`);
             onChanged?.();
         } catch (err) {
-            console.error("Download failed", err);
-            toast.error(err?.message || "Download failed");
+            console.error("Share/download failed", err);
+            toast.error(err?.message || "Could not share/download");
         }
     }, [onChanged]);
 
@@ -127,5 +136,5 @@ export const useAdActions = ({ onChanged, onDeleted } = {}) => {
         }
     }, [onChanged]);
 
-    return { updateStatus, remove, downloadFile, copyCaption, publish, createVariant };
+    return { updateStatus, remove, downloadFile: shareOrDownload, shareOrDownload, copyCaption, publish, createVariant };
 };
