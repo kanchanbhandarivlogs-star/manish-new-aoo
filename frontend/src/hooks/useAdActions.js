@@ -48,35 +48,50 @@ export const useAdActions = ({ onChanged, onDeleted } = {}) => {
         }
     }, [onChanged, onDeleted]);
 
-    const downloadFile = useCallback(async (id, kind) => {
-        const filename = `ad-${id}.${kind === "image" ? "png" : "mp4"}`;
-        try {
-            const res = await apiClient.get(`/ads/${id}/download/${kind}`, { responseType: "blob" });
+    const downloadFile = useCallback(async (ad, kind) => {
+        if (!ad) return;
+        const id = ad.id;
+        const ext = kind === "image" ? "png" : "mp4";
+        const filename = `ad-${id}.${ext}`;
+        const relPath = kind === "image" ? ad.image_path : ad.video_path;
+        if (!relPath) {
+            toast.error(`No ${kind} available yet`);
+            return;
+        }
+        const mediaUrl = `${process.env.REACT_APP_BACKEND_URL}/api/media/${relPath}`;
 
-            // ─── Android / iOS APK: save into the phone's public Downloads folder ───
+        try {
+            // ─── Native (Android APK / iOS): save to phone's Download folder ───
             if (Capacitor.isNativePlatform()) {
-                const base64 = await blobToBase64(res.data);
+                const res = await fetch(mediaUrl);
+                if (!res.ok) throw new Error(`Server returned ${res.status}`);
+                const blob = await res.blob();
+                const base64 = await blobToBase64(blob);
                 await Filesystem.writeFile({
                     path: `Download/${filename}`,
                     data: base64,
                     directory: Directory.ExternalStorage,
                     recursive: true,
                 });
-                toast.success(`Saved to phone Downloads: ${filename}`);
+                // Tell the server we downloaded it (status update + media-scan trigger)
+                apiClient.get(`/ads/${id}/download/${kind}`).catch(() => {});
+                toast.success(`Saved to Downloads: ${filename}`);
                 onChanged?.();
                 return;
             }
 
-            // ─── Web browser fallback: anchor + blob URL ───
-            const url = window.URL.createObjectURL(new Blob([res.data]));
+            // ─── Web browser: anchor + direct media URL (no JWT needed, files are public) ───
             const a = document.createElement("a");
-            a.href = url;
+            a.href = mediaUrl;
             a.download = filename;
+            a.target = "_blank";
+            a.rel = "noopener";
             document.body.appendChild(a);
             a.click();
             a.remove();
-            window.URL.revokeObjectURL(url);
-            toast.success(`Downloaded ${kind}`);
+            // mark as downloaded server-side
+            apiClient.get(`/ads/${id}/download/${kind}`).catch(() => {});
+            toast.success(`Downloading ${kind}…`);
             onChanged?.();
         } catch (err) {
             console.error("Download failed", err);

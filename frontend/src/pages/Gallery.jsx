@@ -348,7 +348,7 @@ const Gallery = () => {
                     ad={focusAd}
                     onClose={() => setFocusAd(null)}
                     onApprove={() => updateStatus(focusAd.id, "approved")}
-                    onDownload={(kind) => downloadFile(focusAd.id, kind)}
+                    onDownload={(kind) => downloadFile(focusAd, kind)}
                     onDelete={() => remove(focusAd.id)}
                     onCopyCaption={() => copyCaption(focusAd)}
                     onPublish={(platforms) => publish(focusAd.id, platforms)}
