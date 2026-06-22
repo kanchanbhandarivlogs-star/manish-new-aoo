@@ -40,13 +40,15 @@ jobs:
           distribution: "temurin"
           java-version: "21"
 
-      - name: Set up Android SDK (with API 36 stable)
-        uses: android-actions/setup-android@v3
-        with:
-          packages: |
-            platform-tools
-            platforms;android-36
-            build-tools;35.0.0
+      - name: Use pre-installed Android SDK
+        run: |
+          echo "Pre-installed SDK at: $ANDROID_HOME"
+          echo "Available platforms:"
+          ls "$ANDROID_HOME/platforms" 2>/dev/null || echo "  (none)"
+          echo "Available build-tools:"
+          ls "$ANDROID_HOME/build-tools" 2>/dev/null || echo "  (none)"
+          # Accept all SDK licenses non-interactively (just in case)
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null 2>&1 || true
 
       - name: Install frontend dependencies
         working-directory: frontend
