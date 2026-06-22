@@ -69,6 +69,31 @@ jobs:
         working-directory: frontend/android
         run: chmod +x ./gradlew
 
+      - name: Ensure gradle-wrapper.jar exists (regenerate if missing)
+        working-directory: frontend/android
+        run: |
+          set -e
+          if [ ! -s "gradle/wrapper/gradle-wrapper.jar" ]; then
+            echo "gradle-wrapper.jar is missing — restoring it…"
+            mkdir -p gradle/wrapper
+            # Method 1: use the system Gradle (pre-installed on GitHub runners)
+            if command -v gradle >/dev/null 2>&1; then
+              echo "  Using system gradle to regenerate wrapper"
+              gradle wrapper --gradle-version 8.11.1 --no-daemon || true
+            fi
+            # Method 2: fallback to direct download from upstream gradle/gradle
+            if [ ! -s "gradle/wrapper/gradle-wrapper.jar" ]; then
+              echo "  Falling back to direct download from gradle/gradle@v8.11.1"
+              curl -fL -o gradle/wrapper/gradle-wrapper.jar \
+                https://raw.githubusercontent.com/gradle/gradle/v8.11.1/gradle/wrapper/gradle-wrapper.jar
+            fi
+          fi
+          ls -la gradle/wrapper/
+          if [ ! -s "gradle/wrapper/gradle-wrapper.jar" ]; then
+            echo "❌ gradle-wrapper.jar could not be restored"
+            exit 1
+          fi
+
       - name: Build debug APK
         working-directory: frontend/android
         run: ./gradlew assembleDebug --no-daemon --stacktrace

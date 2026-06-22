@@ -22,6 +22,8 @@ out/
 # Gradle files
 .gradle/
 build/
+# But explicitly keep the wrapper JAR — required for ./gradlew to work
+!gradle/wrapper/gradle-wrapper.jar
 
 # Local configuration file (sdk path, etc)
 local.properties
